@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
     supervisor \
     winbind \
     cabextract \
-    & apt-get clean
+    && apt-get clean
 
 # 2. Adicionar arquitetura i386 (obrigatória para o Wine) e chaves oficiais da WineHQ
 RUN dpkg --add-architecture i386 && \

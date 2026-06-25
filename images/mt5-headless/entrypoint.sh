@@ -6,7 +6,7 @@ echo "Iniciando preparação do ambiente MetaTrader 5 Headless..."
 # 1. Inicializa o prefixo do Wine se ele não existir no volume persistente
 if [ ! -d "$WINEPREFIX/drive_c" ]; then
     echo "Configurando prefixo do Wine pela primeira vez..."
-    winecfg /v win10
+    xvfb-run -a winecfg /v win10
     sleep 5
 fi
 
