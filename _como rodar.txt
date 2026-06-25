@@ -1,1 +1,8 @@
+no terminal wsl2 ubunto
+
+cd /mnt/e/dev/MT5-Docker/
+
 docker compose up -d --build
+
+docker compose logs -f
+-> para conferir log internos
