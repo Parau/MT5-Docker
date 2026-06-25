@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  mt5-server:
+    build:
+      context: ./images/mt5-headless
+      dockerfile: Dockerfile
+    container_name: mt5_headless_container
+    environment:
+      - MT5_LOGIN=${MT5_LOGIN}
+      - MT5_PASSWORD=${MT5_PASSWORD}
+      - MT5_SERVER=${MT5_SERVER}
+    volumes:
+      - mt5_persistent_data:/config/.wine
+    ports:
+      - "5900:5900"  # Porta do VNC para monitoramento visual
+      - "5555:5555"  # Porta TCP para o seu feed de dados ZeroMQ
+    restart: unless-stopped
+
+volumes:
+  mt5_persistent_data:

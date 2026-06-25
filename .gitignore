@@ -1,0 +1,11 @@
+# Logs e dados temporários do Docker
+.config/
+logs/
+*.log
+
+# Bloquear dados locais persistidos do MetaTrader (contas, chaves)
+mt5_data/
+WINEPREFIX/
+
+# Variáveis de ambiente com senhas e tokens
+.env
