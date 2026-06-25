@@ -15,6 +15,10 @@ services:
     ports:
       - "5900:5900"  # Porta do VNC para monitoramento visual
       - "5555:5555"  # Porta TCP para o seu feed de dados ZeroMQ
+
+    # --- DAR TEMPO PARA O WINE FLUSH DE MEMÓRIA ---
+    stop_grace_period: 30s
+
     restart: unless-stopped
 
 volumes:
