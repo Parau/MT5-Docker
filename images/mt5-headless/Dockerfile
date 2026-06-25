@@ -6,6 +6,9 @@ ENV WINEPREFIX=/config/.wine
 ENV WINEARCH=win64
 ENV DISPLAY=:1
 
+# REPARO CRÍTICO: Adiciona o caminho do WineHQ ao PATH do sistema
+ENV PATH="/opt/wine-stable/bin:${PATH}"
+
 # 1. Instalar dependências essenciais do sistema e X11 virtual
 RUN apt-get update && apt-get install -y \
     curl \
