@@ -11,8 +11,8 @@ services:
     volumes:
       - mt5_persistent_data:/config/.wine
     ports:
-      - "5901:5900"  # Porta do VNC para monitoramento visual
-      - "5555:5555"  # Porta TCP para o seu feed de dados ZeroMQ
+      - "127.0.0.1:5901:5900"  # Porta do VNC para monitoramento visual
+      - "127.0.0.1:5555:5555"  # Porta TCP para o seu feed de dados ZeroMQ
 
     # --- DAR TEMPO PARA O WINE FLUSH DE MEMÓRIA ---
     stop_grace_period: 30s
