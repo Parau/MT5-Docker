@@ -14,8 +14,13 @@ if [ ! -f "$WINE_READY_MARKER" ]; then
     # Limpa conteúdo anterior incompleto, sem remover o mountpoint do volume Docker.
     find "$WINEPREFIX" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
-    xvfb-run -a sh -c "wineboot --init && wineserver -w"
-    xvfb-run -a sh -c "winecfg /v win10 && wineserver -w"
+    echo "Inicializando Wine prefix..."
+    wineboot --init || true
+    wineserver -w || true
+
+    echo "Configurando Wine para Windows 10..."
+    wine reg add "HKEY_CURRENT_USER\\Software\\Wine" /v Version /t REG_SZ /d win10 /f
+    wineserver -w
 
     touch "$WINE_READY_MARKER"
     sleep 5
