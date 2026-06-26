@@ -9,8 +9,10 @@ WINE_READY_MARKER="$WINEPREFIX/.tu_wine_initialized"
 if [ ! -f "$WINE_READY_MARKER" ]; then
     echo "Configurando prefixo do Wine pela primeira vez..."
 
-    rm -rf "$WINEPREFIX"
     mkdir -p "$WINEPREFIX"
+
+    # Limpa conteúdo anterior incompleto, sem remover o mountpoint do volume Docker.
+    find "$WINEPREFIX" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
     xvfb-run -a sh -c "wineboot --init && wineserver -w"
     xvfb-run -a sh -c "winecfg /v win10 && wineserver -w"
