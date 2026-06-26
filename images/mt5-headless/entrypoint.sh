@@ -6,7 +6,8 @@ echo "Iniciando preparação do ambiente MetaTrader 5 Headless..."
 # 1. Inicializa o prefixo do Wine se ele não existir no volume persistente
 if [ ! -d "$WINEPREFIX/drive_c" ]; then
     echo "Configurando prefixo do Wine pela primeira vez..."
-    xvfb-run -a winecfg /v win10
+    # Garante que a tela virtual só fecha quando o wineserver terminar de criar o Windows limpo
+    xvfb-run -a sh -c "winecfg /v win10 && wineserver -w"
     sleep 5
 fi
 
@@ -31,12 +32,12 @@ EOF
 MT5_EXECUTABLE="$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe"
 if [ ! -f "$MT5_EXECUTABLE" ]; then
     echo "Executando instalação silenciosa do MetaTrader 5..."
-    xvfb-run -a wine64 /opt/mt5/mt5setup.exe /auto
+    # Garante que a tela virtual fique aberta até o instalador do MT5 concluir e fechar o servidor
+    xvfb-run -a sh -c "wine64 /opt/mt5/mt5setup.exe /auto && wineserver -w"
     sleep 10
 fi
 
 # 4. DRIBLE DO LIVEUPDATE: Sabota o atualizador automático criando um link simbólico falso.
-# Isso impede que o MT5 tente rodar um instalador visual em background que travaria o container.
 UPDATE_DIR="$WINEPREFIX/drive_c/users/root/AppData/Roaming/MetaQuotes/WebInstall/Updates"
 mkdir -p "$UPDATE_DIR"
 rm -f "$UPDATE_DIR/LiveUpdate.exe"
