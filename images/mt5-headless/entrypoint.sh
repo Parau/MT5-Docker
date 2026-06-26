@@ -14,13 +14,34 @@ if [ ! -f "$WINE_READY_MARKER" ]; then
     # Limpa conteúdo anterior incompleto, sem remover o mountpoint do volume Docker.
     find "$WINEPREFIX" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
+    echo "Iniciando Xvfb temporário para inicialização do Wine..."
+    export DISPLAY=:99
+    export XDG_RUNTIME_DIR=/tmp/runtime-root
+
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 700 "$XDG_RUNTIME_DIR"
+
+    Xvfb :99 -screen 0 1024x768x16 -ac +extension GLX +render -noreset &
+    XVFB_PID=$!
+
+    sleep 3
+
     echo "Inicializando Wine prefix..."
-    wineboot --init || true
-    wineserver -w || true
+    timeout 120s wineboot --init || echo "wineboot retornou erro/timeout; validando prefixo mesmo assim..."
+    timeout 120s wineserver -w || true
 
     echo "Configurando Wine para Windows 10..."
-    wine reg add "HKEY_CURRENT_USER\\Software\\Wine" /v Version /t REG_SZ /d win10 /f
-    wineserver -w
+    wine reg add "HKEY_CURRENT_USER\\Software\\Wine" /v Version /t REG_SZ /d win10 /f || true
+    wineserver -w || true
+
+    echo "Finalizando Xvfb temporário..."
+    kill "$XVFB_PID" || true
+    wait "$XVFB_PID" 2>/dev/null || true
+
+    if [ ! -f "$WINEPREFIX/drive_c/windows/system32/kernel32.dll" ]; then
+        echo "ERRO: Wine prefix não foi criado corretamente. kernel32.dll não encontrado."
+        exit 1
+    fi
 
     touch "$WINE_READY_MARKER"
     sleep 5
