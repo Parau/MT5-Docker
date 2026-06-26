@@ -13,3 +13,12 @@ docker compose logs -f
 
 docker compose down -v
 -> Derruba o ambiente e deleta o volume persistente (usar caso tenha que alterar algo no processo de criacao da imagem)
+
+
+
+===============
+Algumas referencias
+https://github.com/nodalytics/nt_adapters/tree/main/nt_adapters/mt5
+https://github.com/gmag11/MetaTrader5-Docker
+https://github.com/ejtraderLabs/Metatrader5-Docker
+https://github.com/nodalytics/metatrader-terminal
