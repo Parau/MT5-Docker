@@ -47,6 +47,7 @@ if [ ! -f "$MT5_EXECUTABLE" ]; then
     timeout 90s wine reg add "HKEY_CURRENT_USER\\Software\\Wine" /v Version /t REG_SZ /d win10 /f || true
 
     echo "Copiando instalador do MT5 para o drive_c..."
+    mkdir -p "$(dirname "$MT5_INSTALLER")"
     cp /opt/mt5/mt5setup.exe "$MT5_INSTALLER"
 
     echo "Executando instalação silenciosa do MetaTrader 5..."
