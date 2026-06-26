@@ -8,7 +8,7 @@ services:
       - MT5_LOGIN=${MT5_LOGIN}
       - MT5_PASSWORD=${MT5_PASSWORD}
       - MT5_SERVER=${MT5_SERVER}
-      - ENV_VNC_PASSWORD=${ENV_VNC_PASSWORD}
+      - VNC_PASSWORD=${VNC_PASSWORD:?VNC_PASSWORD must be set}
     volumes:
       - mt5_persistent_data:/config/.wine
     ports:
