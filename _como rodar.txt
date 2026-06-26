@@ -6,3 +6,6 @@ docker compose up -d --build
 
 docker compose logs -f
 -> para conferir log internos
+
+docker compose down -v
+-> Derruba o ambiente e deleta o volume persistente (usar caso tenha que alterar algo no processo de criacao da imagem)
