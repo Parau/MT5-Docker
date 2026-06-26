@@ -8,6 +8,7 @@ services:
       - MT5_LOGIN=${MT5_LOGIN}
       - MT5_PASSWORD=${MT5_PASSWORD}
       - MT5_SERVER=${MT5_SERVER}
+      - ENV_VNC_PASSWORD=${ENV_VNC_PASSWORD}
     volumes:
       - mt5_persistent_data:/config/.wine
     ports:
@@ -19,5 +20,11 @@ services:
 
     restart: unless-stopped
 
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f terminal64.exe >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 volumes:
   mt5_persistent_data:
