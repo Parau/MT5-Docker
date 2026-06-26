@@ -3,7 +3,10 @@ no terminal wsl2 ubunto
 cd /mnt/e/dev/MT5-Docker/
 
 docker compose build --no-cache
+-> usar o no-cache apenas se tentativas anteriores foram muito ruins então baixa tudo novo. mas isso deixa bem demorado
+
 docker compose up
+-> inicia no docker
 
 docker compose logs -f
 -> para conferir log internos
