@@ -7,6 +7,7 @@ RESET_WINEPREFIX=0 \
 INSTALL_MT5=0 \
 RUN_MT5=1 \
 ENABLE_VNC=1 \
+DISPLAY_BACKEND=xvnc \
 docker compose up mt5-server
 
 # Para iniciar sem senha
@@ -16,6 +17,8 @@ INSTALL_MT5=0 \
 RUN_MT5=1 \
 ENABLE_VNC=1 \
 docker compose up mt5-server
+
+Usar o TigerVNC que está instalado no windows
 
 =================
 # Primeira instalação / reprovisionamento

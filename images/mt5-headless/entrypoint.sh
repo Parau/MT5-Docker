@@ -25,9 +25,16 @@ MT5_INSTALL_MODE="${MT5_INSTALL_MODE:-manual}"
 ENABLE_VNC="${ENABLE_VNC:-1}"
 VNC_PORT="${VNC_PORT:-5900}"
 VNC_PASSWORD="${VNC_PASSWORD:-}"
+VNC_PASSWD_FILE="${VNC_PASSWD_FILE:-/tmp/vncpasswd}"
 VNC_LOG_FILE="${VNC_LOG_FILE:-/tmp/x11vnc.log}"
 
+DISPLAY_BACKEND="${DISPLAY_BACKEND:-xvnc}"
+VNC_GEOMETRY="${VNC_GEOMETRY:-1280x800}"
+VNC_DEPTH="${VNC_DEPTH:-24}"
+XVNC_LOG_FILE="${XVNC_LOG_FILE:-/tmp/xvnc.log}"
+
 XVFB_PID=""
+XVNC_PID=""
 OPENBOX_PID=""
 
 cleanup() {
@@ -42,6 +49,11 @@ cleanup() {
     if [ -n "${XVFB_PID}" ]; then
         kill "${XVFB_PID}" 2>/dev/null || true
         wait "${XVFB_PID}" 2>/dev/null || true
+    fi
+
+    if [ -n "${XVNC_PID}" ]; then
+        kill "${XVNC_PID}" 2>/dev/null || true
+        wait "${XVNC_PID}" 2>/dev/null || true
     fi
 
     pkill x11vnc 2>/dev/null || true
@@ -180,9 +192,56 @@ else
     echo "RESET_WINEPREFIX=$RESET_WINEPREFIX. Preservando prefixo existente."
 fi
 
-echo "Iniciando Xvfb..."
-Xvfb "$DISPLAY" -screen 0 1024x768x16 -ac +extension GLX +render -noreset &
-XVFB_PID=$!
+echo "Iniciando backend gráfico: DISPLAY_BACKEND=$DISPLAY_BACKEND"
+if [ "$DISPLAY_BACKEND" = "xvnc" ] && [ "$ENABLE_VNC" = "1" ]; then
+    echo "Iniciando TigerVNC Server / Xvnc..."
+    echo "DISPLAY=$DISPLAY"
+    echo "VNC_GEOMETRY=$VNC_GEOMETRY"
+    echo "VNC_DEPTH=$VNC_DEPTH"
+    echo "VNC_PORT=$VNC_PORT"
+
+    if command -v Xvnc >/dev/null 2>&1; then
+        XVNC_BIN="$(command -v Xvnc)"
+    elif command -v Xtigervnc >/dev/null 2>&1; then
+        XVNC_BIN="$(command -v Xtigervnc)"
+    else
+        echo "ERRO: Xvnc/Xtigervnc não encontrado. Verifique se tigervnc-standalone-server foi instalado."
+        exit 1
+    fi
+
+    if [ -n "$VNC_PASSWORD" ]; then
+        echo "VNC com senha habilitada para Xvnc."
+
+        umask 077
+        printf '%s\n' "$VNC_PASSWORD" | vncpasswd -f > "$VNC_PASSWD_FILE"
+        chmod 600 "$VNC_PASSWD_FILE"
+
+        "$XVNC_BIN" "$DISPLAY" \
+            -geometry "$VNC_GEOMETRY" \
+            -depth "$VNC_DEPTH" \
+            -SecurityTypes VncAuth \
+            -PasswordFile "$VNC_PASSWD_FILE" \
+            -rfbport "$VNC_PORT" \
+            -localhost no \
+            >"$XVNC_LOG_FILE" 2>&1 &
+    else
+        echo "VNC sem senha habilitado. Use apenas com porta publicada em localhost."
+
+        "$XVNC_BIN" "$DISPLAY" \
+            -geometry "$VNC_GEOMETRY" \
+            -depth "$VNC_DEPTH" \
+            -SecurityTypes None \
+            -rfbport "$VNC_PORT" \
+            -localhost no \
+            >"$XVNC_LOG_FILE" 2>&1 &
+    fi
+
+    XVNC_PID=$!
+else
+    echo "Iniciando Xvfb..."
+    Xvfb "$DISPLAY" -screen 0 1024x768x16 -ac +extension GLX +render -noreset &
+    XVFB_PID=$!
+fi
 
 echo "Aguardando X server responder..."
 for i in $(seq 1 30); do
@@ -196,7 +255,12 @@ for i in $(seq 1 30); do
 done
 
 if ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
-    echo "ERRO: Xvfb não ficou disponível em $DISPLAY."
+    echo "ERRO: X server não ficou disponível em $DISPLAY."
+
+    echo "Log Xvnc:"
+    cat "$XVNC_LOG_FILE" 2>/dev/null || true
+
+    echo "Log Xvfb não disponível diretamente."
     exit 1
 fi
 
@@ -207,9 +271,13 @@ OPENBOX_PID=$!
 sleep 2
 
 echo "Processos gráficos ativos:"
-ps -ef | grep -E "Xvfb|openbox" | grep -v grep || true
+ps -ef | grep -E "Xvnc|Xtigervnc|Xvfb|x11vnc|openbox" | grep -v grep || true
 
-start_vnc
+if [ "$DISPLAY_BACKEND" = "xvnc" ]; then
+    echo "DISPLAY_BACKEND=xvnc. VNC já está sendo servido pelo Xvnc; x11vnc não será iniciado."
+else
+    start_vnc
+fi
 
 if [ ! -e "$WINEPREFIX/drive_c/windows/mono" ]; then
     echo "Wine Mono não encontrado. Baixando Wine Mono..."
@@ -351,6 +419,13 @@ if [ "$RUN_MT5" = "1" ]; then
     echo "RUN_MT5=1. Iniciando MetaTrader 5..."
     echo "MT5_EXE=$MT5_EXE"
     echo "MT5_CMD_OPTIONS=$MT5_CMD_OPTIONS"
+
+    if [ ! -f "$MT5_EXE" ]; then
+        echo "ERRO: RUN_MT5=1, mas MT5_EXE não foi encontrado:"
+        echo "$MT5_EXE"
+        echo "Execute antes com INSTALL_MT5=1 MT5_INSTALL_MODE=manual."
+        exit 1
+    fi
 
     wine "$MT5_EXE" $MT5_CMD_OPTIONS &
 
