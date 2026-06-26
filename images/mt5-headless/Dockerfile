@@ -34,8 +34,25 @@ RUN dpkg --add-architecture i386 && \
     apt-get install --install-recommends -y winehq-stable && \
     rm -rf /var/lib/apt/lists/*
 
-# BLINDAGEM DO WINE: Cria links simbólicos globais para o sistema sempre achar o wine64
-RUN ln -s /opt/wine-stable/bin/* /usr/local/bin/
+ENV PATH="/opt/wine-stable/bin:${PATH}"
+RUN wine --version && which wine
+
+# algumas dependências úteis para reduzir erros gráficos/Wine
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    gnupg2 \
+    software-properties-common \
+    xvfb \
+    x11vnc \
+    supervisor \
+    winbind \
+    cabextract \
+    dbus-x11 \
+    libvulkan1 \
+    libgl1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # 4. Baixar e instalar Wine Gecko e Mono em modo silencioso
 RUN mkdir -p /usr/share/wine/gecko /usr/share/wine/mono && \

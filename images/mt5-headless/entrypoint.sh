@@ -4,10 +4,18 @@ set -e
 echo "Iniciando preparação do ambiente MetaTrader 5 Headless..."
 
 # 1. Inicializa o prefixo do Wine se ele não existir no volume persistente
-if [ ! -d "$WINEPREFIX/drive_c" ]; then
+WINE_READY_MARKER="$WINEPREFIX/.tu_wine_initialized"
+
+if [ ! -f "$WINE_READY_MARKER" ]; then
     echo "Configurando prefixo do Wine pela primeira vez..."
-    # Garante que a tela virtual só fecha quando o wineserver terminar de criar o Windows limpo
+
+    rm -rf "$WINEPREFIX"
+    mkdir -p "$WINEPREFIX"
+
+    xvfb-run -a sh -c "wineboot --init && wineserver -w"
     xvfb-run -a sh -c "winecfg /v win10 && wineserver -w"
+
+    touch "$WINE_READY_MARKER"
     sleep 5
 fi
 
