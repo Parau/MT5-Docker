@@ -17,7 +17,6 @@ services:
 
     # --- DAR TEMPO PARA O WINE FLUSH DE MEMÓRIA ---
     stop_grace_period: 30s
-
     restart: unless-stopped
 
     healthcheck:
@@ -26,5 +25,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+      
 volumes:
   mt5_persistent_data:
