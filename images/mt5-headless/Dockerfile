@@ -6,9 +6,6 @@ ENV WINEPREFIX=/config/.wine
 ENV WINEARCH=win64
 ENV DISPLAY=:1
 
-# REPARO CRÍTICO: Adiciona o caminho do WineHQ ao PATH do sistema
-ENV PATH="/opt/wine-stable/bin:${PATH}"
-
 # 1. Instalar dependências essenciais do sistema e X11 virtual
 RUN apt-get update && apt-get install -y \
     curl \
@@ -24,7 +21,8 @@ RUN apt-get update && apt-get install -y \
 
 # 2. Aceitar automaticamente a licença EULA da Microsoft e instalar as msttcorefonts
 RUN echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections && \
-    apt-get update && apt-get install -y ttf-mscorefonts-installer && \
+    apt-get update && \
+    apt-get install -y ttf-mscorefonts-installer && \
     apt-get clean
 
 # 3. Adicionar arquitetura i386 (obrigatória para o Wine) e chaves oficiais da WineHQ
@@ -36,6 +34,9 @@ RUN dpkg --add-architecture i386 && \
     apt-get install --install-recommends -y winehq-stable && \
     rm -rf /var/lib/apt/lists/*
 
+# BLINDAGEM DO WINE: Cria links simbólicos globais para o sistema sempre achar o wine64
+RUN ln -s /opt/wine-stable/bin/* /usr/local/bin/
+
 # 4. Baixar e instalar Wine Gecko e Mono em modo silencioso
 RUN mkdir -p /usr/share/wine/gecko /usr/share/wine/mono && \
     wget -O /usr/share/wine/gecko/wine-gecko-2.47.4-x86_64.msi https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86_64.msi && \
@@ -45,12 +46,11 @@ RUN mkdir -p /usr/share/wine/gecko /usr/share/wine/mono && \
 WORKDIR /opt/mt5
 RUN wget https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe
 
-# 6. Copiar arquivos de configuration da orquestração interna
+# 6. Copiar arquivos de configuração da orquestração interna
 COPY supervisord.conf /etc/supervisor/supervisord.conf
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Define o volume para persistência de dados do MT5 e credenciais salvas do Wine
 VOLUME /config/.wine
 
 ENTRYPOINT ["/entrypoint.sh"]
