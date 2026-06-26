@@ -99,6 +99,7 @@ if [ ! -f "$MT5_EXECUTABLE" ]; then
     wineserver -k || true
     sleep 2
 
+    echo "Finalizando Xvfb temporário da instalação do MT5..."
     kill "$XVFB_PID" || true
     wait "$XVFB_PID" 2>/dev/null || true
 
