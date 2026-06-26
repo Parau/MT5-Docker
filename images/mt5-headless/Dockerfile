@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV WINEPREFIX=/config/.wine
 ENV WINEARCH=win64
 ENV DISPLAY=:1
-ENV PATH="/opt/wine-stable/bin:${PATH}"
+ENV PATH="/opt/wine-staging/bin:${PATH}"
 
 # 1. Dependências base + suporte gráfico + repositórios
 RUN dpkg --add-architecture i386 && \
@@ -42,7 +42,7 @@ RUN dpkg --add-architecture i386 && \
     && wget -O /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key \
     && wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/jammy/winehq-jammy.sources \
     && apt-get update \
-    && apt-get install --install-recommends -y winehq-stable \
+    && apt-get install --install-recommends -y winehq-staging \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
