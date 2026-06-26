@@ -33,6 +33,7 @@ RUN dpkg --add-architecture i386 && \
         libxcomposite1 \
         libasound2 \
         fonts-liberation \
+        procps \
     && add-apt-repository -y multiverse \
     && echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections \
     && apt-get update \
