@@ -5,6 +5,9 @@ services:
       dockerfile: Dockerfile
     container_name: mt5_headless_container
     environment:
+      - RESET_WINEPREFIX=${RESET_WINEPREFIX:-1}
+      - BOOTSTRAP_TIMEOUT_SECONDS=${BOOTSTRAP_TIMEOUT_SECONDS:-420}
+      - WINEDEBUG=${WINEDEBUG:--all}
       - MT5_LOGIN=${MT5_LOGIN}
       - MT5_PASSWORD=${MT5_PASSWORD}
       - MT5_SERVER=${MT5_SERVER}
@@ -12,19 +15,10 @@ services:
     volumes:
       - mt5_persistent_data:/config/.wine
     ports:
-      - "127.0.0.1:5901:5900"  # Porta do VNC para monitoramento visual
-      - "127.0.0.1:5555:5555"  # Porta TCP para o seu feed de dados ZeroMQ
-
-    # --- DAR TEMPO PARA O WINE FLUSH DE MEMÓRIA ---
+      - "127.0.0.1:5901:5900"
+      - "127.0.0.1:5555:5555"
     stop_grace_period: 30s
-    restart: unless-stopped
+    restart: "no"
 
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f terminal64.exe >/dev/null || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-      
 volumes:
   mt5_persistent_data:
