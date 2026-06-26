@@ -41,7 +41,7 @@ MT5_EXECUTABLE="$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe"
 if [ ! -f "$MT5_EXECUTABLE" ]; then
     echo "Executando instalação silenciosa do MetaTrader 5..."
     # Garante que a tela virtual fique aberta até o instalador do MT5 concluir e fechar o servidor
-    xvfb-run -a sh -c "wine64 /opt/mt5/mt5setup.exe /auto && wineserver -w"
+    xvfb-run -a sh -c "wine /opt/mt5/mt5setup.exe /auto && wineserver -w"
     sleep 10
 fi
 
