@@ -46,6 +46,40 @@ if [ ! -f "$MT5_EXECUTABLE" ]; then
     echo "Configurando Wine para Windows 10..."
     timeout 90s wine reg add "HKEY_CURRENT_USER\\Software\\Wine" /v Version /t REG_SZ /d win10 /f || true
 
+    echo "Aguardando processos iniciais do Wine terminarem..."
+    for i in $(seq 1 180); do
+        if ! pgrep -f "wineboot.exe|winedevice.exe|rundll32.exe setupapi" >/dev/null; then
+            echo "Processos iniciais do Wine finalizados."
+            break
+        fi
+
+        echo "Wine ainda inicializando... tentativa $i/180"
+        sleep 2
+    done
+
+    if pgrep -f "wineboot.exe|winedevice.exe|rundll32.exe setupapi" >/dev/null; then
+        echo "ERRO: Wine bootstrap não terminou dentro do tempo esperado."
+        ps -ef | grep -E "wineboot|winedevice|rundll32|wineserver" | grep -v grep || true
+        exit 1
+    fi
+
+    WINE_KERNEL32_64="$WINEPREFIX/drive_c/windows/system32/kernel32.dll"
+    WINE_KERNEL32_32="$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll"
+
+    echo "Validando Wine prefix 64-bit e 32-bit..."
+    if [ ! -f "$WINE_KERNEL32_64" ] || [ ! -f "$WINE_KERNEL32_32" ]; then
+        echo "ERRO: Wine prefix incompleto."
+        echo "64-bit: $WINE_KERNEL32_64"
+        echo "32-bit: $WINE_KERNEL32_32"
+        exit 1
+    fi
+
+    echo "Validando execução básica do Wine..."
+    timeout 60s wine cmd /c ver || {
+        echo "ERRO: Wine prefix existe, mas ainda não executa comandos básicos."
+        exit 1
+    }
+
     echo "Copiando instalador do MT5 para o drive_c..."
     mkdir -p "$(dirname "$MT5_INSTALLER")"
     cp /opt/mt5/mt5setup.exe "$MT5_INSTALLER"
