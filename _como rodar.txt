@@ -21,6 +21,10 @@ docker compose up mt5-server
 Usar o TigerVNC que está instalado no windows
 
 =================
+Sempre que alterar o entrypoint.sh usar o comando abaixo par retirar CRLF da edição no windows
+sed -i 's/\r$//' images/mt5-headless/entrypoint.sh
+
+=================
 # Primeira instalação / reprovisionamento
 RESET_WINEPREFIX=1 \
 INSTALL_MT5=1 \
@@ -28,7 +32,6 @@ RUN_MT5=0 \
 MT5_INSTALL_MODE=manual \
 ENABLE_VNC=1 \
 docker compose up mt5-server
-
 
 =================
 docker compose build --no-cache
