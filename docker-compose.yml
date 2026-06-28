@@ -1,34 +1,70 @@
+x-mt5-common: &mt5-common
+  build:
+    context: .
+    dockerfile: images/mt5-headless/Dockerfile
+  cap_add:
+    - SYS_PTRACE
+  security_opt:
+    - seccomp:unconfined
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  environment: &mt5-env
+    RESET_WINEPREFIX: ${RESET_WINEPREFIX:-0}
+    INSTALL_MT5: ${INSTALL_MT5:-0}
+    RUN_MT5: ${RUN_MT5:-1}
+    BOOTSTRAP_TIMEOUT_SECONDS: ${BOOTSTRAP_TIMEOUT_SECONDS:-420}
+    WINEDEBUG: ${WINEDEBUG:--all}
+    ENABLE_VNC: ${ENABLE_VNC:-1}
+    VNC_PORT: ${VNC_PORT:-5900}
+    VNC_PASSWORD: ${VNC_PASSWORD:?VNC_PASSWORD must be set in .env}
+    DEPLOY_MQL5: ${DEPLOY_MQL5:-1}
+    CONFIGURE_NT5: ${CONFIGURE_NT5:-1}
+    BOOTSTRAP_PYTHON: ${BOOTSTRAP_PYTHON:-1}
+    RUN_BRIDGE: ${RUN_BRIDGE:-1}
+    BRIDGE_WAIT_SECONDS: ${BRIDGE_WAIT_SECONDS:-180}
+    NT5_SERVICE_ENABLED: ${NT5_SERVICE_ENABLED:-0}
+  stop_grace_period: 30s
+  restart: "no"
+
 services:
-  mt5-server:
-    build:
-      context: ./images/mt5-headless
-      dockerfile: Dockerfile
-    container_name: mt5_headless_container
-
-    cap_add:
-      - SYS_PTRACE
-    security_opt:
-      - seccomp:unconfined
-
+  mt5-tickmill:
+    <<: *mt5-common
+    profiles:
+      - tickmill
+    container_name: mt5_tickmill_container
     environment:
-      - RESET_WINEPREFIX=${RESET_WINEPREFIX:-0}
-      - INSTALL_MT5=${INSTALL_MT5:-0}
-      - RUN_MT5=${RUN_MT5:-1}
-      - BOOTSTRAP_TIMEOUT_SECONDS=${BOOTSTRAP_TIMEOUT_SECONDS:-420}
-      - WINEDEBUG=${WINEDEBUG:--all}
-      - MT5_LOGIN=${MT5_LOGIN}
-      - MT5_PASSWORD=${MT5_PASSWORD}
-      - MT5_SERVER=${MT5_SERVER}
-      - ENABLE_VNC=${ENABLE_VNC:-1}
-      - VNC_PORT=${VNC_PORT:-5900}
-      - VNC_PASSWORD=${VNC_PASSWORD:?VNC_PASSWORD must be set}
+      <<: *mt5-env
+      MT5_LOGIN: ${MT5_LOGIN:-}
+      MT5_PASSWORD: ${MT5_PASSWORD:-}
+      MT5_SERVER: ${MT5_SERVER:-Tickmill-Demo}
+      RPYC_PORT: ${RPYC_PORT:-18812}
+      NT5_WS_URL: ${NT5_WS_URL:-ws://host.docker.internal:8765/mt5-feed}
+      NT5_WS_SYMBOLS: ${NT5_WS_SYMBOLS:-BTCUSD}
     volumes:
-      - mt5_persistent_data:/config/.wine
+      - mt5_tickmill_data:/config/.wine
     ports:
       - "127.0.0.1:5901:5900"
-      - "127.0.0.1:5555:5555"
-    stop_grace_period: 30s
-    restart: "no"
+      - "127.0.0.1:${RPYC_PORT:-18812}:${RPYC_PORT:-18812}"
+
+  mt5-xp:
+    <<: *mt5-common
+    profiles:
+      - xp
+    container_name: mt5_xp_container
+    environment:
+      <<: *mt5-env
+      MT5_LOGIN: ${MT5_LOGIN_XP:-}
+      MT5_PASSWORD: ${MT5_PASSWORD_XP:-}
+      MT5_SERVER: ${MT5_SERVER_XP:-XPMT5-DEMO}
+      RPYC_PORT: ${RPYC_PORT_XP:-18813}
+      NT5_WS_URL: ${NT5_WS_URL_XP:-ws://host.docker.internal:8766/mt5-feed}
+      NT5_WS_SYMBOLS: ${NT5_WS_SYMBOLS_XP:-WDON26}
+    volumes:
+      - mt5_xp_data:/config/.wine
+    ports:
+      - "127.0.0.1:5902:5900"
+      - "127.0.0.1:${RPYC_PORT_XP:-18813}:${RPYC_PORT_XP:-18813}"
 
 volumes:
-  mt5_persistent_data:
+  mt5_tickmill_data:
+  mt5_xp_data:

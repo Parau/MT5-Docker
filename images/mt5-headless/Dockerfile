@@ -36,6 +36,7 @@ RUN dpkg --add-architecture i386 && \
         fonts-dejavu-core \
         tigervnc-standalone-server \
         tigervnc-tools \
+        python3-minimal \
     && mkdir -pm755 /etc/apt/keyrings \
     && wget -O /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key \
     && wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/debian/dists/bookworm/winehq-bookworm.sources \
@@ -50,8 +51,13 @@ RUN dpkg --add-architecture i386 && \
 
 RUN wine --version && which wine
 
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY images/mt5-headless/entrypoint.sh /entrypoint.sh
+COPY images/mt5-headless/scripts/ /scripts/
+COPY vendor/bridge/ /opt/bridge/
+COPY vendor/mql5/ /vendor/mql5/
+
+RUN chmod +x /entrypoint.sh /scripts/*.sh \
+    && sed -i 's/\r$//' /entrypoint.sh /scripts/*.sh /scripts/configure_nt5_service.py
 
 VOLUME /config/.wine
 

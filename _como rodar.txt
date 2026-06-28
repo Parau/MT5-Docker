@@ -1,54 +1,43 @@
-no terminal wsl2 ubunto
-
-cd /mnt/e/dev/MT5-Docker/
-
-# Para iniciar com a senha
-RESET_WINEPREFIX=0 \
-INSTALL_MT5=0 \
-RUN_MT5=1 \
-ENABLE_VNC=1 \
-DISPLAY_BACKEND=xvnc \
-docker compose up mt5-server
-
-# Para iniciar sem senha
-VNC_PASSWORD=test \
-RESET_WINEPREFIX=0 \
-INSTALL_MT5=0 \
-RUN_MT5=1 \
-ENABLE_VNC=1 \
-docker compose up mt5-server
-
-Usar o TigerVNC que está instalado no windows
-
-=================
-Sempre que alterar o entrypoint.sh usar o comando abaixo par retirar CRLF da edição no windows
-sed -i 's/\r$//' images/mt5-headless/entrypoint.sh
-
-=================
-# Primeira instalação / reprovisionamento
-RESET_WINEPREFIX=1 \
-INSTALL_MT5=1 \
-RUN_MT5=0 \
-MT5_INSTALL_MODE=manual \
-ENABLE_VNC=1 \
-docker compose up mt5-server
-
-=================
-docker compose build --no-cache
--> usar o no-cache apenas se tentativas anteriores foram muito ruins então baixa tudo novo. mas isso deixa bem demorado
-
-docker compose up
--> inicia no docker
-
-docker compose logs -f
--> para conferir log internos
-
-docker compose down -v
--> Derruba o ambiente e deleta o volume persistente (usar caso tenha que alterar algo no processo de criacao da imagem)
-
-===============
-Algumas referencias
-https://github.com/nodalytics/nt_adapters/tree/main/nt_adapters/mt5
-https://github.com/gmag11/MetaTrader5-Docker
-https://github.com/ejtraderLabs/Metatrader5-Docker
-https://github.com/nodalytics/metatrader-terminal
+no terminal wsl2 ubuntu
+
+cd /mnt/e/dev/MT5-Docker/
+
+# Documentação: README.md, docs/MANUAL_STEPS.md, docs/XP_SETUP.md
+# Nunca commitar .env (senhas locais).
+
+# ========== TICKMILL ==========
+docker compose --profile tickmill up -d mt5-tickmill
+docker compose --profile tickmill logs -f mt5-tickmill
+# VNC 127.0.0.1:5901 | RPyC 18812 | WS test 8765
+
+# Primeira instalação Tickmill:
+# RESET_WINEPREFIX=1 INSTALL_MT5=1 RUN_MT5=0 MT5_INSTALL_MODE=manual \
+#   docker compose --profile tickmill up mt5-tickmill
+
+# ========== XP ==========
+docker compose --profile xp up -d mt5-xp
+docker compose --profile xp logs -f mt5-xp
+# VNC 127.0.0.1:5902 | RPyC 18813 | WS test 8766
+
+# Primeira instalação XP:
+# RESET_WINEPREFIX=1 INSTALL_MT5=1 RUN_MT5=0 MT5_INSTALL_MODE=manual \
+#   docker compose --profile xp up mt5-xp
+
+# WS test server XP:
+# WS_PORT=8766 ./scripts/run_ws_test_server.sh
+
+# ========== AMBOS ==========
+# docker compose --profile tickmill --profile xp up -d
+
+# --- Rebuild ---
+./scripts/sync_vendor_from_nt_mt5.sh
+docker compose --profile tickmill build mt5-tickmill
+docker compose --profile tickmill up -d mt5-tickmill
+
+# CRLF (scripts editados no Windows):
+sed -i 's/\r$//' images/mt5-headless/entrypoint.sh images/mt5-headless/scripts/*.sh
+
+# Apagar volume (perde login + whitelist):
+# docker compose --profile tickmill down -v
+# docker compose --profile xp down -v
+
