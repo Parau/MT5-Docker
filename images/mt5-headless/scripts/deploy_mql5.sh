@@ -31,10 +31,14 @@ fi
 
 if [ -f "$VENDOR_ROOT/Services/NT5TickFeedService.mq5" ]; then
     cp -f "$VENDOR_ROOT/Services/NT5TickFeedService.mq5" "$MT5_MQL5_ROOT/Services/"
+    echo "DEPLOY_MQL5: NT5TickFeedService.mq5"
 fi
 
 if [ -f "$VENDOR_ROOT/Services/NT5TickFeedService.ex5" ]; then
     cp -f "$VENDOR_ROOT/Services/NT5TickFeedService.ex5" "$MT5_MQL5_ROOT/Services/"
+    echo "DEPLOY_MQL5: NT5TickFeedService.ex5 (compilado vendored)"
+else
+    echo "DEPLOY_MQL5: AVISO — NT5TickFeedService.ex5 ausente; compile no VNC (MetaEditor F7) ou re-sync vendor com .ex5 do nt_mt5."
 fi
 
 echo "DEPLOY_MQL5: concluído."

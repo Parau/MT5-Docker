@@ -83,6 +83,10 @@ Requires a sibling `nt_mt5` checkout and Python with `websockets` installed.
 
 ### 4. Start NT5TickFeedService
 
+The vendored **`NT5TickFeedService.ex5`** is deployed automatically on container
+start (sync from `nt_mt5` → `vendor/` → `deploy_mql5.sh`). **VNC compile (F7) is
+only needed** if you changed `.mq5` without updating the `.ex5` in `nt_mt5`.
+
 Via VNC — **do not open Properties** unless you need to change symbols (inputs
 are applied automatically by `configure_nt5.sh` on container start):
 
@@ -122,6 +126,7 @@ TICKS symbol=BTCUSD ...
 | VNC `Authentication failure` | Wrong password — check `.env`; recreate container after changing `VNC_PASSWORD` |
 | Error **4014** | Whitelist missing `host.docker.internal` — complete step 2 |
 | Error **5270** | Stop service, wait 30s, start again |
+| Error **5271** (too many sockets) | Same as 5270 — v1.05+ destroys client on reconnect failure; recompile Service if leak persists |
 | URL shows `172.20.0.1` in Experts | Restart container so `configure_nt5.sh` runs; or fix in Properties |
 | UI frozen | Keyboard: `Esc` / `Enter`; or `docker compose --profile tickmill restart mt5-tickmill` |
 | Container exits when MT5 dies | Expected — `docker compose --profile tickmill up -d mt5-tickmill` |

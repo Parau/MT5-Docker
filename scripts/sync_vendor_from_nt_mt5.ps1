@@ -15,6 +15,16 @@ New-Item -ItemType Directory -Force -Path "$Root\vendor\bridge","$Root\vendor\mq
 Copy-Item "$BridgeSrc\mt5_bridge.py","$BridgeSrc\history_args.py" -Destination "$Root\vendor\bridge\" -Force
 Copy-Item "$Mql5Src\Include\NT5FeedWire.mqh" -Destination "$Root\vendor\mql5\Include\" -Force
 Copy-Item "$Mql5Src\Include\WebSocket\*.mqh" -Destination "$Root\vendor\mql5\Include\WebSocket\" -Force
-Copy-Item "$Mql5Src\Services\NT5TickFeedService.mq5","$Mql5Src\Services\NT5TickFeedService.ex5" -Destination "$Root\vendor\mql5\Services\" -Force
+Copy-Item "$Mql5Src\Services\NT5TickFeedService.mq5" -Destination "$Root\vendor\mql5\Services\" -Force
+Write-Host "  + NT5TickFeedService.mq5"
+
+$Ex5 = Join-Path $Mql5Src "Services\NT5TickFeedService.ex5"
+if (Test-Path $Ex5) {
+    Copy-Item $Ex5 -Destination "$Root\vendor\mql5\Services\" -Force
+    $sizeKb = [math]::Round((Get-Item $Ex5).Length / 1KB, 1)
+    Write-Host "  + NT5TickFeedService.ex5 (${sizeKb} KB)"
+} else {
+    Write-Warning "NT5TickFeedService.ex5 ausente em $Mql5Src\Services\ — compile no MetaEditor (F7) e re-sync."
+}
 
 Write-Host "vendor/ synced from $NtMt5"

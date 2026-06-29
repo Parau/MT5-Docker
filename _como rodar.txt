@@ -1,43 +1,95 @@
-no terminal wsl2 ubuntu
-
-cd /mnt/e/dev/MT5-Docker/
-
-# Documentação: README.md, docs/MANUAL_STEPS.md, docs/XP_SETUP.md
-# Nunca commitar .env (senhas locais).
-
-# ========== TICKMILL ==========
-docker compose --profile tickmill up -d mt5-tickmill
-docker compose --profile tickmill logs -f mt5-tickmill
-# VNC 127.0.0.1:5901 | RPyC 18812 | WS test 8765
-
-# Primeira instalação Tickmill:
-# RESET_WINEPREFIX=1 INSTALL_MT5=1 RUN_MT5=0 MT5_INSTALL_MODE=manual \
-#   docker compose --profile tickmill up mt5-tickmill
-
-# ========== XP ==========
-docker compose --profile xp up -d mt5-xp
-docker compose --profile xp logs -f mt5-xp
-# VNC 127.0.0.1:5902 | RPyC 18813 | WS test 8766
-
-# Primeira instalação XP:
-# RESET_WINEPREFIX=1 INSTALL_MT5=1 RUN_MT5=0 MT5_INSTALL_MODE=manual \
-#   docker compose --profile xp up mt5-xp
-
-# WS test server XP:
-# WS_PORT=8766 ./scripts/run_ws_test_server.sh
-
-# ========== AMBOS ==========
-# docker compose --profile tickmill --profile xp up -d
-
-# --- Rebuild ---
-./scripts/sync_vendor_from_nt_mt5.sh
-docker compose --profile tickmill build mt5-tickmill
-docker compose --profile tickmill up -d mt5-tickmill
-
-# CRLF (scripts editados no Windows):
-sed -i 's/\r$//' images/mt5-headless/entrypoint.sh images/mt5-headless/scripts/*.sh
-
-# Apagar volume (perde login + whitelist):
-# docker compose --profile tickmill down -v
-# docker compose --profile xp down -v
-
+no terminal wsl2 ubuntu
+
+
+
+cd /mnt/e/dev/MT5-Docker/
+
+
+
+# Documentação: README.md, docs/MANUAL_STEPS.md, docs/XP_SETUP.md
+
+# Nunca commitar .env (senhas locais).
+
+
+
+# ========== TICKMILL ==========
+docker compose --profile tickmill up -d mt5-tickmill
+
+docker compose --profile tickmill logs -f mt5-tickmill
+
+VNC 127.0.0.1:5901 | RPyC 18812 | WS test 8765
+
+## Antes de encerrar o docker (comando está fechando os dois)
+docker compose --profile tickmill --profile xp down
+
+## quando erro ao reiniciar o container
+| Comando | O que faz |
+|---------|-----------|
+| `docker compose --profile tickmill stop mt5-tickmill` | Para o container Tickmill com SIGTERM (MT5, VNC, bridge encerram de forma ordenada). |
+| `docker compose --profile tickmill rm -f mt5-tickmill` | Remove o container parado. O volume `mt5_tickmill_data` (Wine/MT5) **permanece**; só some o filesystem efêmero, inclusive `/tmp/.X99-lock`. |
+| `docker compose --profile tickmill up -d mt5-tickmill` | Cria um container **novo** e sobe em background (`-d`), rodando o entrypoint do zero (VNC, MT5, bridge). |
+
+**Resumo:** para → apaga o container problemático → sobe outro limpo, mantendo login, terminal e config no volume.
+
+## Primeira instalação Tickmill:
+RESET_WINEPREFIX=1 INSTALL_MT5=1 RUN_MT5=0 MT5_INSTALL_MODE=manual \
+
+docker compose --profile tickmill up mt5-tickmill
+
+# ========== XP ==========
+docker compose --profile xp up -d mt5-xp
+
+docker compose --profile xp logs -f mt5-xp
+
+VNC 127.0.0.1:5902 | RPyC 18813 | WS test 8766
+
+Para focar na bridge, filtre no PowerShell:
+docker compose --profile xp logs -f mt5-xp 2>&1 | Select-String -Pattern "START_BRIDGE|bridge|RPyC|18813"
+
+Ou veja só as últimas linhas:
+docker compose --profile xp logs --tail 100 mt5-xp
+
+## Primeira instalação XP:
+
+RESET_WINEPREFIX=1 INSTALL_MT5=1 RUN_MT5=0 MT5_INSTALL_MODE=manual \
+
+docker compose --profile xp up mt5-xp
+
+
+
+## WS test server XP:
+
+WS_PORT=8766 ./scripts/run_ws_test_server.sh
+
+
+
+# ========== AMBOS ==========
+
+docker compose --profile tickmill --profile xp up -d
+
+# --- Rebuild (após mudar Service/bridge no nt_mt5) ---
+
+# 1. Compile NT5TickFeedService.mq5 no MetaEditor (F7) e guarde .ex5 em nt_mt5/MQL5/refactoring/Services/
+# 2. Sync vendor (copia .mq5 + .ex5 + includes + bridge):
+./scripts/sync_vendor_from_nt_mt5.sh
+
+docker compose --profile tickmill build mt5-tickmill
+docker compose --profile xp build mt5-xp
+
+docker compose --profile tickmill up -d mt5-tickmill
+docker compose --profile xp up -d mt5-xp
+
+
+
+# CRLF (scripts editados no Windows):
+
+sed -i 's/\r$//' images/mt5-headless/entrypoint.sh images/mt5-headless/scripts/*.sh
+
+
+
+# Apagar volume (perde login + whitelist):
+docker compose --profile tickmill down -v
+
+docker compose --profile xp down -v
+
+

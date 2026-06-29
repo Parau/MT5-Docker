@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property service
 #property copyright "nt_mt5"
-#property version   "1.04"
+#property version   "1.05"
 #property description "NT5 live tick + bar feed via CopyTicks/CopyRates and WebSocket"
 
 #include <WebSocket/client.mqh>
@@ -574,39 +574,6 @@ void NT5MaybeSendHeartbeat()
   }
 
 //+------------------------------------------------------------------+
-bool NT5EnsureWebSocketOpen()
-  {
-   if(g_ws == NULL)
-      g_ws = new CNT5FeedWebSocket(InpWsUrl, InpDebug);
-
-   if(g_ws.isConnected())
-      return true;
-
-   g_ws.close();
-
-   if(!g_ws.open())
-     {
-      PrintFormat(
-         "[NT5Feed] WS open failed url=%s err=%d — check allowed URLs in terminal options",
-         InpWsUrl,
-         GetLastError()
-      );
-      return false;
-     }
-
-   return true;
-  }
-
-//+------------------------------------------------------------------+
-void CNT5FeedWebSocket::onConnected()
-  {
-   if(InpDebug)
-      Print(" > Connected ", InpWsUrl);
-
-   NT5SendHello();
-  }
-
-//+------------------------------------------------------------------+
 void NT5ClearActiveBarSubscriptions()
   {
    for(int i = 0; i < ArraySize(g_bars); i++)
@@ -622,6 +589,52 @@ void NT5ClearActiveBarSubscriptions()
             g_bars[i].timeframe
          );
      }
+  }
+
+//+------------------------------------------------------------------+
+void NT5DestroyWebSocket()
+  {
+   if(g_ws == NULL)
+      return;
+
+   // WebSocketClient::close() only frees handles while isConnected(); delete always
+   // runs ~WebSocketClient which deletes socket/connection (SocketClose in transport dtor).
+   g_ws.close();
+   delete g_ws;
+   g_ws = NULL;
+   NT5ClearActiveBarSubscriptions();
+  }
+
+//+------------------------------------------------------------------+
+bool NT5EnsureWebSocketOpen()
+  {
+   if(g_ws != NULL && g_ws.isConnected())
+      return true;
+
+   NT5DestroyWebSocket();
+
+   g_ws = new CNT5FeedWebSocket(InpWsUrl, InpDebug);
+   ResetLastError();
+   if(g_ws.open())
+      return true;
+
+   const int err = GetLastError();
+   PrintFormat(
+      "[NT5Feed] WS open failed url=%s err=%d — check allowed URLs in terminal options",
+      InpWsUrl,
+      err
+   );
+   NT5DestroyWebSocket();
+   return false;
+  }
+
+//+------------------------------------------------------------------+
+void CNT5FeedWebSocket::onConnected()
+  {
+   if(InpDebug)
+      Print(" > Connected ", InpWsUrl);
+
+   NT5SendHello();
   }
 
 //+------------------------------------------------------------------+
@@ -676,12 +689,7 @@ void OnStart()
       Sleep(InpSleepMs);
      }
 
-   if(g_ws != NULL)
-     {
-      g_ws.close();
-      delete g_ws;
-      g_ws = NULL;
-     }
+   NT5DestroyWebSocket();
 
    Print("[NT5Feed] stopped");
   }

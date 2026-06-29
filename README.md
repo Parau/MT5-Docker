@@ -14,7 +14,7 @@ When `RUN_MT5=1` (default), the container automatically:
 |------|--------|-------------|
 | 1 | entrypoint | Wine prefix, Xvnc, openbox |
 | 2 | entrypoint | Start `terminal64.exe` |
-| 3 | `deploy_mql5.sh` | Sync `NT5TickFeedService` + `Include/` into MT5 `MQL5/` |
+| 3 | `deploy_mql5.sh` | Sync `NT5TickFeedService` (`.mq5` + vendored `.ex5`) + `Include/` into MT5 `MQL5/` |
 | 4 | `configure_nt5.sh` | Set `services.ini` inputs (`NT5_WS_URL`, symbols) + algo-trading flags in `common.ini` |
 | 5 | `bootstrap_python.sh` | Wine Python + `numpy<2` + `MetaTrader5` + `rpyc` (once per volume) |
 | 6 | `start_bridge.sh` | RPyC bridge on port **18812** after MT5 responds |
@@ -41,7 +41,7 @@ cp .env.example .env
 # Edit .env — set VNC_PASSWORD (quote if special chars: VNC_PASSWORD="...")
 ```
 
-Sync vendored assets from `nt_mt5` before build:
+Sync vendored assets from `nt_mt5` before build (includes compiled `NT5TickFeedService.ex5` when present in `nt_mt5/MQL5/refactoring/Services/`):
 
 ```powershell
 .\scripts\sync_vendor_from_nt_mt5.ps1

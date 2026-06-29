@@ -16,7 +16,15 @@ cp -f "$NT_MT5/MQL5/refactoring/bridge/mt5_bridge.py" \
 cp -f "$NT_MT5/MQL5/refactoring/Include/NT5FeedWire.mqh" "$ROOT/vendor/mql5/Include/"
 cp -f "$NT_MT5/MQL5/refactoring/Include/WebSocket/"*.mqh "$ROOT/vendor/mql5/Include/WebSocket/"
 cp -f "$NT_MT5/MQL5/refactoring/Services/NT5TickFeedService.mq5" \
-      "$NT_MT5/MQL5/refactoring/Services/NT5TickFeedService.ex5" \
       "$ROOT/vendor/mql5/Services/"
+echo "  + NT5TickFeedService.mq5"
+
+EX5_SRC="$NT_MT5/MQL5/refactoring/Services/NT5TickFeedService.ex5"
+if [ -f "$EX5_SRC" ]; then
+    cp -f "$EX5_SRC" "$ROOT/vendor/mql5/Services/"
+    echo "  + NT5TickFeedService.ex5 ($(du -k "$EX5_SRC" | cut -f1) KB)"
+else
+    echo "AVISO: NT5TickFeedService.ex5 ausente em nt_mt5 — compile no MetaEditor (F7) e re-sync." >&2
+fi
 
 echo "vendor/ synced from $NT_MT5"
