@@ -427,12 +427,33 @@ if [ "$RUN_MT5" = "1" ]; then
         exit 1
     fi
 
+    if [ "${DEPLOY_MQL5:-1}" = "1" ]; then
+        /scripts/deploy_mql5.sh || echo "AVISO: deploy MQL5 falhou (continuando)."
+    fi
+
+    if [ "${CONFIGURE_NT5:-1}" = "1" ]; then
+        /scripts/configure_nt5.sh || echo "AVISO: configure NT5 falhou (continuando)."
+    fi
+
     wine "$MT5_EXE" $MT5_CMD_OPTIONS &
 
     MT5_PID=$!
     echo "MetaTrader 5 iniciado com PID=$MT5_PID"
-    echo "Container permanecerá ativo enquanto o MT5 estiver rodando."
 
+    if [ "${BOOTSTRAP_PYTHON:-1}" = "1" ]; then
+        /scripts/bootstrap_python.sh || echo "AVISO: bootstrap Python falhou (continuando)."
+    fi
+
+    if [ "${RUN_BRIDGE:-1}" = "1" ]; then
+        echo "RUN_BRIDGE=1. Bridge RPyC será iniciada em background após MT5 responder."
+        /scripts/start_bridge.sh &
+        BRIDGE_PID=$!
+        echo "Bridge RPyC PID=$BRIDGE_PID (porta ${RPYC_PORT:-18812})"
+    else
+        echo "RUN_BRIDGE=${RUN_BRIDGE:-0}. Bridge não será iniciada."
+    fi
+
+    echo "Container permanecerá ativo enquanto o MT5 estiver rodando."
     wait "$MT5_PID"
 else
     echo "RUN_MT5=$RUN_MT5. MT5 instalado/validado, mas não iniciado."
