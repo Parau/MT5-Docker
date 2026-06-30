@@ -1,10 +1,6 @@
 no terminal wsl2 ubuntu
 
-
-
 cd /mnt/e/dev/MT5-Docker/
-
-
 
 # Documentação: README.md, docs/MANUAL_STEPS.md, docs/XP_SETUP.md
 
