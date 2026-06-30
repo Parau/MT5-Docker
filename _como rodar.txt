@@ -11,7 +11,10 @@ cd /mnt/e/dev/MT5-Docker/
 # ========== TICKMILL ==========
 docker compose --profile tickmill up -d mt5-tickmill
 
-docker compose --profile tickmill logs -f mt5-tickmill
+docker compose --profile tickmill logs -f mt5-tickmill      # aqui é BTCUSD
+docker compose --profile tickmill logs -f mt5-tickmill 2>&1 | grep -i USTEC
+
+docker compose --profile tickmill logs --tail 100 mt5-tickmill
 
 VNC 127.0.0.1:5901 | RPyC 18812 | WS test 8765
 
