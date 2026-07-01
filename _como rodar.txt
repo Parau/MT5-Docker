@@ -11,7 +11,7 @@ REFERÊNCIA
 
 Broker    profile   service        container               VNC    RPyC   WS    símbolo
 Tickmill  tickmill  mt5-tickmill   mt5_tickmill_container  5901   18812  8765  BTCUSD
-XP        xp        mt5-xp         mt5_xp_container        5902   18813  8766  WDON26
+XP        xp        mt5-xp         mt5_xp_container        5902   18813  8766  WDOQ26
 AMP       amp       mt5-amp        mt5_amp_container       5903   18814  8767  ENQU26
 
 Homolog no host: MT5_PORT = coluna RPyC

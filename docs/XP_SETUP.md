@@ -61,7 +61,7 @@ Expected service URL (auto-configured):
 ws://host.docker.internal:8766/mt5-feed
 ```
 
-Default symbol: `WDON26` (override via `NT5_WS_SYMBOLS_XP` in `.env`).
+Default symbol: `WDOQ26` (override via `NT5_WS_SYMBOLS_XP` in `.env`). `WDON26` (série N) expired — use current WDO nominal.
 
 ## Verify RPyC
 
@@ -79,7 +79,7 @@ set MT5_HOST=127.0.0.1
 set MT5_PORT=18813
 set MT5_VENUE_PROFILE=xp_b3
 set MT5_ACCOUNT_NUMBER=<your-xp-login>
-set MT5_SYMBOL=WDON26
+set MT5_SYMBOL=WDOQ26
 set MT5_BROKER=XPMT5-DEMO
 set HOMOLOG_REPORT_JSON=homologation/last_xp_closed_market_report.json
 E:\miniconda\envs\trading\python.exe homologation\run_xp_closed_market.py
@@ -128,7 +128,7 @@ MT5 may overwrite `Config/services.ini` when the service starts (URL reverts to
 
 ```bash
 docker exec -e NT5_WS_URL=ws://host.docker.internal:8766/mt5-feed \
-  -e NT5_WS_SYMBOLS=WDON26 mt5_xp_container /scripts/configure_nt5.sh
+  -e NT5_WS_SYMBOLS=WDOQ26 mt5_xp_container /scripts/configure_nt5.sh
 ```
 
 Then in VNC: stop → start **NT5TickFeedService**. Confirm the host WS server is

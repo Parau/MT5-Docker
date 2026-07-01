@@ -58,7 +58,7 @@ services:
       MT5_SERVER: ${MT5_SERVER_XP:-XPMT5-DEMO}
       RPYC_PORT: ${RPYC_PORT_XP:-18813}
       NT5_WS_URL: ${NT5_WS_URL_XP:-ws://host.docker.internal:8766/mt5-feed}
-      NT5_WS_SYMBOLS: ${NT5_WS_SYMBOLS_XP:-WDON26}
+      NT5_WS_SYMBOLS: ${NT5_WS_SYMBOLS_XP:-WDOQ26}
     volumes:
       - mt5_xp_data:/config/.wine
     ports:
