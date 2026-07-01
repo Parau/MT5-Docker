@@ -65,6 +65,26 @@ services:
       - "127.0.0.1:5902:5900"
       - "127.0.0.1:${RPYC_PORT_XP:-18813}:${RPYC_PORT_XP:-18813}"
 
+  mt5-amp:
+    <<: *mt5-common
+    profiles:
+      - amp
+    container_name: mt5_amp_container
+    environment:
+      <<: *mt5-env
+      MT5_LOGIN: ${MT5_LOGIN_AMP:-}
+      MT5_PASSWORD: ${MT5_PASSWORD_AMP:-}
+      MT5_SERVER: ${MT5_SERVER_AMP:-AMPGlobalUSA-Demo}
+      RPYC_PORT: ${RPYC_PORT_AMP:-18814}
+      NT5_WS_URL: ${NT5_WS_URL_AMP:-ws://host.docker.internal:8767/mt5-feed}
+      NT5_WS_SYMBOLS: ${NT5_WS_SYMBOLS_AMP:-ENQU26}
+    volumes:
+      - mt5_amp_data:/config/.wine
+    ports:
+      - "127.0.0.1:5903:5900"
+      - "127.0.0.1:${RPYC_PORT_AMP:-18814}:${RPYC_PORT_AMP:-18814}"
+
 volumes:
   mt5_tickmill_data:
   mt5_xp_data:
+  mt5_amp_data:
