@@ -25,7 +25,8 @@ USO DIÁRIO
 Subir todos
 
 docker compose --profile tickmill --profile xp --profile amp up -d
-
+docker compose --profile tickmill --profile amp up -d
+docker compose --profile amp up -d
 
 Subir só Tickmill
 
