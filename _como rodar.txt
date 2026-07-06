@@ -156,7 +156,7 @@ WS_PORT=8767 ./scripts/run_ws_test_server.sh
 
 ══════════════════════════════════════════════════════════════════════════════
 REBUILD
-(1º compilar .mq5 no MetaEditor e guardar .ex5 no nt_mt5; 2º comandos abaixo;
+(1º compilar NT5TickFeedService v1.06 no MetaEditor e guardar .ex5 no nt_mt5; 2º comandos abaixo;
  3º VNC Stop → Start NT5TickFeedService em cada instância usada)
 ══════════════════════════════════════════════════════════════════════════════
 

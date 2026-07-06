@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property service
 #property copyright "nt_mt5"
-#property version   "1.05"
+#property version   "1.06"
 #property description "NT5 live tick + bar feed via CopyTicks/CopyRates and WebSocket"
 
 #include <WebSocket/client.mqh>
@@ -678,7 +678,7 @@ void OnStart()
      {
       if(!NT5EnsureWebSocketOpen())
         {
-         Sleep(1000);
+         Sleep(4000);
          continue;
         }
 

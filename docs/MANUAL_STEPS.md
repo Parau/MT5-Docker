@@ -127,6 +127,7 @@ TICKS symbol=BTCUSD ...
 | Error **4014** | Whitelist missing `host.docker.internal` — complete step 2 |
 | Error **5270** | Stop service, wait 30s, start again |
 | Error **5271** (too many sockets) | Same as 5270 — v1.05+ destroys client on reconnect failure; recompile Service if leak persists |
+| WS reconnect spam / host WS not ready | v1.06+ waits **4 s** between `NT5EnsureWebSocketOpen()` retries — start host WS test server before or shortly after Service auto-start |
 | URL shows `172.20.0.1` in Experts | Restart container so `configure_nt5.sh` runs; or fix in Properties |
 | UI frozen | Keyboard: `Esc` / `Enter`; or `docker compose --profile tickmill restart mt5-tickmill` |
 | Container exits when MT5 dies | Expected — `docker compose --profile tickmill up -d mt5-tickmill` |
