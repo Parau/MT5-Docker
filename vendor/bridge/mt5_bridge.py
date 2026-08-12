@@ -32,6 +32,49 @@ def _result_count(result) -> int | None:
         return None
 
 
+# Canonical MT5 tick layout for A05 EXTERNAL_RPyC transport (brine-safe bytes).
+_MT5_TICK_DTYPE = None  # lazy — numpy imported only when encoding ticks
+
+
+def _mt5_tick_dtype():
+    global _MT5_TICK_DTYPE
+    if _MT5_TICK_DTYPE is None:
+        import numpy as np
+
+        _MT5_TICK_DTYPE = np.dtype(
+            [
+                ("time", "<i8"),
+                ("bid", "<f8"),
+                ("ask", "<f8"),
+                ("last", "<f8"),
+                ("volume", "<u8"),
+                ("time_msc", "<i8"),
+                ("flags", "<u4"),
+                ("volume_real", "<f8"),
+            ],
+        )
+    return _MT5_TICK_DTYPE
+
+
+def _encode_ticks_frame(result):
+    """Return None or (\"MT5_TICKS_V1\", row_count, raw_bytes) — no pickle."""
+    if result is None:
+        return None
+    import numpy as np
+
+    dtype = _mt5_tick_dtype()
+    required = {name for name, _ in dtype.descr if name}
+    if not isinstance(result, np.ndarray) or result.dtype.names is None:
+        raise RuntimeError("copy_ticks_range did not return a structured numpy.ndarray")
+    missing = required - set(result.dtype.names)
+    if missing:
+        raise RuntimeError(f"copy_ticks_range missing fields: {sorted(missing)}")
+    canonical = np.empty(len(result), dtype=dtype)
+    for name in required:
+        canonical[name] = result[name]
+    return ("MT5_TICKS_V1", int(len(canonical)), canonical.tobytes(order="C"))
+
+
 class MT5Service(rpyc.Service):
 
     exposed_getmodule = None
@@ -176,7 +219,8 @@ class MT5Service(rpyc.Service):
         )
         result = mt5.copy_ticks_range(symbol, norm_from, norm_to, flags)
         print(f"[DEBUG] copy_ticks_range | return count={_result_count(result)}")
-        return result
+        # A05/x04: brine-safe frame — never enable RPyC allow_pickle for ndarrays.
+        return _encode_ticks_frame(result)
 
     def exposed_copy_ticks_from(self, symbol, date_from, count, flags):
         norm_from = coerce_tick_time(date_from)
