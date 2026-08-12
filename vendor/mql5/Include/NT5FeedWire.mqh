@@ -18,12 +18,13 @@ string NT5JsonEscape(const string value)
 string NT5TickToJson(const MqlTick &tick)
   {
    return StringFormat(
-      "{\"time_msc\":%I64d,\"bid\":%.8f,\"ask\":%.8f,\"last\":%.8f,\"volume\":%I64d,\"flags\":%u}",
+      "{\"time_msc\":%I64d,\"bid\":%.8f,\"ask\":%.8f,\"last\":%.8f,\"volume\":%I64d,\"volume_real\":%.8f,\"flags\":%u}",
       tick.time_msc,
       tick.bid,
       tick.ask,
       tick.last,
       (long)tick.volume,
+      tick.volume_real,
       tick.flags
    );
   }

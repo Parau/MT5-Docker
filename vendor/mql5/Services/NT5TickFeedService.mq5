@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property service
 #property copyright "nt_mt5"
-#property version   "1.06"
+#property version   "1.10"
 #property description "NT5 live tick + bar feed via CopyTicks/CopyRates and WebSocket"
 
 #include <WebSocket/client.mqh>
@@ -131,6 +131,8 @@ void NT5DeactivateSymbol(const string symbol, bool &changed)
       return;
 
    g_symbols[idx].active = false;
+   g_symbols[idx].last_msc = 0;
+   g_symbols[idx].has_last_sent = false;
    changed = true;
    PrintFormat("[NT5Feed] unsubscribed symbol %s", symbol);
   }
@@ -396,7 +398,8 @@ void NT5ExportSymbolTicks(const int idx)
    if(!g_symbols[idx].active)
       return;
 
-   if(g_symbols[idx].last_msc == 0)
+   const bool seeded_now = (g_symbols[idx].last_msc == 0);
+   if(seeded_now)
       NT5SeedCursorFromMarket(idx);
 
    MqlTick raw[];
