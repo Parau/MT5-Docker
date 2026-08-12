@@ -73,4 +73,4 @@ RUN chmod +x /entrypoint.sh /scripts/*.sh \
 VOLUME /config/.wine
 
 ENTRYPOINT ["/init"]
-CMD ["/entrypoint.sh"]
+CMD ["with-contenv", "/entrypoint.sh"]
