@@ -152,7 +152,7 @@ wait_for_vnc_access
 
 echo "Wine bootstrap é gerenciado pelo oneshot s6 'wine-bootstrap' e já foi concluído antes do CMD."
 
-/scripts/install_mt5.sh
+echo "Etapa de instalação/validação do MT5 é gerenciada pelo oneshot s6 'install-mt5' e já foi processada antes do CMD."
 
 ##########################
 

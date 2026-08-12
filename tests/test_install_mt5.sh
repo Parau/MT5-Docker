@@ -145,6 +145,16 @@ EOF
     export WINEDEBUG=-all
     export XDG_RUNTIME_DIR="${CASE_DIR}/runtime"
     mkdir -p "$XDG_RUNTIME_DIR"
+
+    # Default: skip VNC barrier so install semantics stay the focus.
+    export ENABLE_VNC=0
+    export DISPLAY_BACKEND=xvnc
+    export VNC_PORT=5900
+    export INSTALL_MT5_VNC_TIMEOUT_SECONDS=1
+    unset INSTALL_MT5_FAKE_CREATE_EXE || true
+    unset INSTALL_MT5_FAKE_WINE_MODE || true
+    unset MT5_EXE || true
+    unset MT5_INSTALL_MODE || true
 }
 
 run_install() {
@@ -289,6 +299,80 @@ run_install
 assert_eq "0" "$STATUS" "custom exe exit"
 assert_file_exists "$MT5_EXE" "custom exe created"
 pass "custom MT5_EXE honored"
+cleanup_case
+
+echo "=== test 10: VNC unavailable fails before download ==="
+setup_case
+export INSTALL_MT5=1
+export MT5_INSTALL_MODE=auto
+export MT5_EXE="${PREFIX}/drive_c/Program Files/MetaTrader 5/terminal64.exe"
+export ENABLE_VNC=1
+export DISPLAY_BACKEND=xvnc
+export VNC_PORT=1
+export INSTALL_MT5_VNC_TIMEOUT_SECONDS=1
+unset INSTALL_MT5_FAKE_CREATE_EXE || true
+run_install
+assert_eq "1" "$STATUS" "vnc timeout exit"
+echo "$OUTPUT" | grep -q "state=FAILED reason=vnc_not_ready" || fail "vnc_not_ready log missing"
+curl_called && fail "curl must not run when VNC not ready"
+wine_called && fail "wine must not run when VNC not ready"
+assert_file_missing "$MT5_EXE" "exe absent after VNC failure"
+pass "VNC unavailable blocks downloads"
+cleanup_case
+
+echo "=== test 11: VNC ready allows install ==="
+setup_case
+export INSTALL_MT5=1
+export MT5_INSTALL_MODE=auto
+export MT5_EXE="${PREFIX}/drive_c/Program Files/MetaTrader 5/terminal64.exe"
+export ENABLE_VNC=1
+export DISPLAY_BACKEND=xvnc
+export INSTALL_MT5_VNC_TIMEOUT_SECONDS=5
+export INSTALL_MT5_FAKE_WINE_MODE=auto_success
+export INSTALL_MT5_FAKE_CREATE_EXE="$MT5_EXE"
+
+VNC_LISTENER_PORT="$(python3 - <<'PY'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+)"
+export VNC_PORT="$VNC_LISTENER_PORT"
+
+python3 - <<'PY' &
+import socket
+import time
+import os
+
+port = int(os.environ["VNC_PORT"])
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(("127.0.0.1", port))
+srv.listen(1)
+srv.settimeout(10.0)
+deadline = time.time() + 10.0
+while time.time() < deadline:
+    try:
+        conn, _addr = srv.accept()
+        conn.close()
+        break
+    except socket.timeout:
+        continue
+srv.close()
+PY
+VNC_LISTENER_PID=$!
+sleep 0.2
+
+run_install
+assert_eq "0" "$STATUS" "vnc ready install exit"
+echo "$OUTPUT" | grep -q "state=VNC_READY provider=xvnc" || fail "VNC_READY log missing"
+curl_called || fail "curl should run after VNC ready"
+assert_file_exists "$MT5_EXE" "exe created after VNC ready"
+pass "VNC ready allows install"
+kill "$VNC_LISTENER_PID" 2>/dev/null || true
+wait "$VNC_LISTENER_PID" 2>/dev/null || true
 cleanup_case
 
 echo "=== summary ==="
