@@ -3,7 +3,7 @@
 #
 # Data flow: started by s6 before CMD; entrypoint waits via xdpyinfo. Input from container env
 # via with-contenv; daemon exec uses minimal sanitized environment.
-# Limitations: x11vnc remains in entrypoint; Openbox/Wine/MT5/bridge not managed here.
+# Limitations: x11vnc fallback is managed by vnc-access; Openbox/Wine/MT5/bridge not managed here.
 set -Eeuo pipefail
 
 readonly LOG_PREFIX="[DISPLAY]"

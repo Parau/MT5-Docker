@@ -13,70 +13,73 @@ MT5_EXE="${MT5_EXE:-$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.ex
 
 ENABLE_VNC="${ENABLE_VNC:-1}"
 VNC_PORT="${VNC_PORT:-5900}"
-VNC_PASSWORD="${VNC_PASSWORD:-}"
-VNC_PASSWD_FILE="${VNC_PASSWD_FILE:-/tmp/vncpasswd}"
 VNC_LOG_FILE="${VNC_LOG_FILE:-/tmp/x11vnc.log}"
 
 DISPLAY_BACKEND="${DISPLAY_BACKEND:-xvnc}"
-VNC_GEOMETRY="${VNC_GEOMETRY:-1280x800}"
-VNC_DEPTH="${VNC_DEPTH:-24}"
 XVNC_LOG_FILE="${XVNC_LOG_FILE:-/tmp/xvnc.log}"
 
 cleanup() {
     echo "Finalizando processos temporários..."
     wineserver -k || true
-
-    pkill x11vnc 2>/dev/null || true
 }
 
 trap cleanup EXIT
 
-start_vnc() {
+vnc_port_ready() {
+    local port="$1"
+    (echo >"/dev/tcp/127.0.0.1/${port}") >/dev/null 2>&1
+}
+
+wait_for_vnc_access() {
     if [ "$ENABLE_VNC" != "1" ]; then
-        echo "ENABLE_VNC=$ENABLE_VNC. VNC não será iniciado."
+        echo "Acesso VNC desabilitado por ENABLE_VNC=${ENABLE_VNC}."
         return 0
     fi
 
-    echo "Iniciando x11vnc na porta interna $VNC_PORT..."
+    echo "Acesso VNC é gerenciado pelo serviço s6 'vnc-access'."
+    echo "Aguardando acesso VNC em 127.0.0.1:${VNC_PORT}..."
 
-    pkill x11vnc 2>/dev/null || true
-    rm -f "$VNC_LOG_FILE"
+    local i
+    for i in $(seq 1 30); do
+        if [ "$DISPLAY_BACKEND" = "xvnc" ]; then
+            if vnc_port_ready "$VNC_PORT"; then
+                echo "Acesso VNC via Xvnc pronto."
+                return 0
+            fi
+        else
+            if pgrep -x x11vnc >/dev/null 2>&1 && vnc_port_ready "$VNC_PORT"; then
+                echo "Acesso VNC via x11vnc pronto."
+                return 0
+            fi
+        fi
 
-    if [ -n "$VNC_PASSWORD" ]; then
-        echo "VNC com senha habilitada."
-        x11vnc \
-            -display "$DISPLAY" \
-            -listen 0.0.0.0 \
-            -forever \
-            -shared \
-            -passwd "$VNC_PASSWORD" \
-            -rfbport "$VNC_PORT" \
-            -noxdamage \
-            >"$VNC_LOG_FILE" 2>&1 &
+        echo "Aguardando acesso VNC... tentativa $i/30"
+        sleep 1
+    done
+
+    echo "ERRO: Acesso VNC não ficou disponível na porta ${VNC_PORT}."
+
+    echo "Diagnóstico serviço s6 vnc-access:"
+    /command/s6-svstat /run/service/vnc-access 2>/dev/null || true
+
+    echo "Diagnóstico serviço s6 display:"
+    /command/s6-svstat /run/service/display 2>/dev/null || true
+
+    if [ "$DISPLAY_BACKEND" != "xvnc" ]; then
+        echo "Diagnóstico serviço s6 window-manager:"
+        /command/s6-svstat /run/service/window-manager 2>/dev/null || true
+        echo "Processos x11vnc:"
+        pgrep -a -x x11vnc 2>/dev/null || true
+        echo "Log x11vnc:"
+        cat "$VNC_LOG_FILE" 2>/dev/null || true
     else
-        echo "VNC sem senha habilitado. Use apenas com porta publicada em localhost."
-        x11vnc \
-            -display "$DISPLAY" \
-            -listen 0.0.0.0 \
-            -forever \
-            -shared \
-            -nopw \
-            -rfbport "$VNC_PORT" \
-            -noxdamage \
-            >"$VNC_LOG_FILE" 2>&1 &
+        echo "Processos Xvnc/Xtigervnc:"
+        ps -eo pid,comm | grep -E "Xvnc|Xtigervnc" | grep -v grep || true
+        echo "Log Xvnc:"
+        cat "$XVNC_LOG_FILE" 2>/dev/null || true
     fi
 
-    VNC_PID=$!
-    sleep 1
-
-    if kill -0 "$VNC_PID" 2>/dev/null; then
-        echo "x11vnc iniciado com PID=$VNC_PID"
-        echo "VNC disponível na porta interna $VNC_PORT"
-    else
-        echo "ERRO: x11vnc não iniciou corretamente. Log:"
-        cat "$VNC_LOG_FILE" || true
-        return 1
-    fi
+    exit 1
 }
 
 echo "WINEPREFIX=$WINEPREFIX"
@@ -145,11 +148,7 @@ fi
 echo "Processos gráficos ativos:"
 ps -ef | grep -E "Xvnc|Xtigervnc|Xvfb|x11vnc|openbox" | grep -v grep || true
 
-if [ "$DISPLAY_BACKEND" = "xvnc" ]; then
-    echo "DISPLAY_BACKEND=xvnc. VNC já está sendo servido pelo Xvnc; x11vnc não será iniciado."
-else
-    start_vnc
-fi
+wait_for_vnc_access
 
 echo "Wine bootstrap é gerenciado pelo oneshot s6 'wine-bootstrap' e já foi concluído antes do CMD."
 

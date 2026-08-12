@@ -1,0 +1,118 @@
+#!/command/with-contenv bash
+# s6 longrun: own remote VNC access policy (Xvnc delegate, x11vnc fallback, or disabled).
+#
+# Data flow: depends on wine-bootstrap; display already owns Xvnc/Xvfb; entrypoint only
+# waits for TCP/pgrep before install_mt5.sh. Input from container env via with-contenv.
+# Limitations: does not own display/Openbox; does not install MT5; secrets must not reach
+# the final daemon environment/argv.
+set -Eeuo pipefail
+
+readonly LOG_PREFIX="[VNC-ACCESS]"
+
+log() {
+    echo "${LOG_PREFIX} $*"
+}
+
+DISPLAY="${DISPLAY:-:99}"
+DISPLAY_BACKEND="${DISPLAY_BACKEND:-xvnc}"
+ENABLE_VNC="${ENABLE_VNC:-1}"
+VNC_PORT="${VNC_PORT:-5900}"
+VNC_PASSWORD="${VNC_PASSWORD:-}"
+VNC_PASSWD_FILE="${VNC_PASSWD_FILE:-/tmp/vncpasswd}"
+VNC_LOG_FILE="${VNC_LOG_FILE:-/tmp/x11vnc.log}"
+VNC_ACCESS_DISPLAY_TIMEOUT_SECONDS="${VNC_ACCESS_DISPLAY_TIMEOUT_SECONDS:-30}"
+VNC_ACCESS_WINDOW_MANAGER_TIMEOUT_SECONDS="${VNC_ACCESS_WINDOW_MANAGER_TIMEOUT_SECONDS:-30}"
+
+exec_sentinel() {
+    exec env -i \
+        PATH="${PATH}" \
+        HOME="${HOME:-/root}" \
+        sleep infinity
+}
+
+wait_display_ready() {
+    log "state=WAITING_DISPLAY display=${DISPLAY}"
+    local ready=0
+    local _attempt
+    for _attempt in $(seq 1 "$VNC_ACCESS_DISPLAY_TIMEOUT_SECONDS"); do
+        if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+            ready=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$ready" -ne 1 ]; then
+        log "state=FAILED reason=display_not_ready"
+        exit 1
+    fi
+    log "state=DISPLAY_READY"
+}
+
+wait_window_manager_ready() {
+    log "state=WAITING_WINDOW_MANAGER"
+    local ready=0
+    local _attempt
+    for _attempt in $(seq 1 "$VNC_ACCESS_WINDOW_MANAGER_TIMEOUT_SECONDS"); do
+        if pgrep -x openbox >/dev/null 2>&1; then
+            ready=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$ready" -ne 1 ]; then
+        log "state=FAILED reason=window_manager_not_ready"
+        exit 1
+    fi
+    log "state=WINDOW_MANAGER_READY"
+}
+
+exec_x11vnc() {
+    local auth_args=()
+
+    wait_display_ready
+    wait_window_manager_ready
+
+    log "state=STARTING_X11VNC"
+    rm -f "$VNC_LOG_FILE"
+
+    if [ -n "$VNC_PASSWORD" ]; then
+        log "auth=VncAuth"
+        umask 077
+        printf '%s\n' "$VNC_PASSWORD" | vncpasswd -f > "$VNC_PASSWD_FILE"
+        chmod 600 "$VNC_PASSWD_FILE"
+        auth_args=(-rfbauth "$VNC_PASSWD_FILE")
+    else
+        log "auth=None"
+        rm -f "$VNC_PASSWD_FILE"
+        auth_args=(-nopw)
+    fi
+
+    exec env -i \
+        PATH="${PATH}" \
+        HOME="${HOME:-/root}" \
+        DISPLAY="${DISPLAY}" \
+        x11vnc \
+            -display "${DISPLAY}" \
+            -listen 0.0.0.0 \
+            -forever \
+            -shared \
+            "${auth_args[@]}" \
+            -rfbport "${VNC_PORT}" \
+            -noxdamage \
+        >"${VNC_LOG_FILE}" 2>&1
+}
+
+if [ "$ENABLE_VNC" != "1" ]; then
+    log "provider=disabled"
+    log "state=DISABLED"
+    exec_sentinel
+fi
+
+if [ "$DISPLAY_BACKEND" = "xvnc" ]; then
+    log "provider=xvnc"
+    log "state=DELEGATED_TO_DISPLAY"
+    exec_sentinel
+fi
+
+log "provider=x11vnc"
+exec_x11vnc
