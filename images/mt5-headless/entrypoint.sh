@@ -435,10 +435,12 @@ if [ "$RUN_MT5" = "1" ]; then
         /scripts/configure_nt5.sh || echo "AVISO: configure NT5 falhou (continuando)."
     fi
 
-    wine "$MT5_EXE" $MT5_CMD_OPTIONS &
+    MT5_EXE="$MT5_EXE" \
+    MT5_CMD_OPTIONS="$MT5_CMD_OPTIONS" \
+    /scripts/mt5_lifecycle.sh &
 
-    MT5_PID=$!
-    echo "MetaTrader 5 iniciado com PID=$MT5_PID"
+    MT5_LIFECYCLE_PID=$!
+    echo "MT5 lifecycle iniciado com PID=$MT5_LIFECYCLE_PID"
 
     if [ "${BOOTSTRAP_PYTHON:-1}" = "1" ]; then
         /scripts/bootstrap_python.sh || echo "AVISO: bootstrap Python falhou (continuando)."
@@ -453,8 +455,17 @@ if [ "$RUN_MT5" = "1" ]; then
         echo "RUN_BRIDGE=${RUN_BRIDGE:-0}. Bridge não será iniciada."
     fi
 
-    echo "Container permanecerá ativo enquanto o MT5 estiver rodando."
-    wait "$MT5_PID"
+    echo "Container permanecerá ativo enquanto o MT5 lifecycle estiver ativo."
+    set +e
+    wait "$MT5_LIFECYCLE_PID"
+    MT5_LIFECYCLE_STATUS=$?
+    set -e
+
+    echo "MT5 lifecycle terminou com código: $MT5_LIFECYCLE_STATUS"
+
+    if [ "$MT5_LIFECYCLE_STATUS" -ne 0 ]; then
+        exit "$MT5_LIFECYCLE_STATUS"
+    fi
 else
     echo "RUN_MT5=$RUN_MT5. MT5 instalado/validado, mas não iniciado."
 fi
