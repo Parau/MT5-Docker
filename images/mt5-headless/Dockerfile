@@ -69,9 +69,9 @@ COPY images/mt5-headless/scripts/ /scripts/
 COPY vendor/bridge/ /opt/bridge/
 COPY vendor/mql5/ /vendor/mql5/
 
-RUN chmod +x /entrypoint.sh /scripts/*.sh /etc/s6-overlay/s6-rc.d/display/run \
+RUN chmod +x /entrypoint.sh /scripts/*.sh /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s6-rc.d/window-manager/run \
     && sed -i 's/\r$//' /entrypoint.sh /scripts/*.sh /scripts/configure_nt5_service.py \
-    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/display/run
+    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s6-rc.d/window-manager/run
 
 VOLUME /config/.wine
 

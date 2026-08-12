@@ -33,16 +33,9 @@ VNC_GEOMETRY="${VNC_GEOMETRY:-1280x800}"
 VNC_DEPTH="${VNC_DEPTH:-24}"
 XVNC_LOG_FILE="${XVNC_LOG_FILE:-/tmp/xvnc.log}"
 
-OPENBOX_PID=""
-
 cleanup() {
     echo "Finalizando processos temporários..."
     wineserver -k || true
-
-    if [ -n "${OPENBOX_PID}" ]; then
-        kill "${OPENBOX_PID}" 2>/dev/null || true
-        wait "${OPENBOX_PID}" 2>/dev/null || true
-    fi
 
     pkill x11vnc 2>/dev/null || true
 }
@@ -207,11 +200,35 @@ if ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "Iniciando openbox como window manager mínimo..."
-openbox >/tmp/openbox.log 2>&1 &
-OPENBOX_PID=$!
+echo "Window manager é gerenciado pelo serviço s6 'window-manager'."
+echo "Aguardando Openbox ficar disponível..."
+for i in $(seq 1 30); do
+    if pgrep -x openbox >/dev/null 2>&1; then
+        echo "Openbox pronto."
+        break
+    fi
 
-sleep 2
+    echo "Aguardando Openbox... tentativa $i/30"
+    sleep 1
+done
+
+if ! pgrep -x openbox >/dev/null 2>&1; then
+    echo "ERRO: Openbox não ficou disponível."
+
+    echo "Diagnóstico serviço s6 window-manager:"
+    /command/s6-svstat /run/service/window-manager 2>/dev/null || true
+
+    echo "Diagnóstico serviço s6 display:"
+    /command/s6-svstat /run/service/display 2>/dev/null || true
+
+    echo "Processos gráficos:"
+    ps -ef | grep -E "openbox|Xvnc|Xtigervnc|Xvfb" | grep -v grep || true
+
+    echo "Log Openbox:"
+    cat /tmp/openbox.log 2>/dev/null || true
+
+    exit 1
+fi
 
 echo "Processos gráficos ativos:"
 ps -ef | grep -E "Xvnc|Xtigervnc|Xvfb|x11vnc|openbox" | grep -v grep || true
