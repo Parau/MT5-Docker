@@ -1,5 +1,7 @@
 FROM debian:bookworm-slim
 
+ARG S6_OVERLAY_VERSION=3.2.3.2
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV WINEPREFIX=/config/.wine
 ENV WINEARCH=win64
@@ -37,6 +39,7 @@ RUN dpkg --add-architecture i386 && \
         tigervnc-standalone-server \
         tigervnc-tools \
         python3-minimal \
+        xz-utils \
     && mkdir -pm755 /etc/apt/keyrings \
     && wget -O /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key \
     && wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/debian/dists/bookworm/winehq-bookworm.sources \
@@ -51,6 +54,14 @@ RUN dpkg --add-architecture i386 && \
 
 RUN wine --version && which wine
 
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp/s6-overlay-noarch.tar.xz
+RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz \
+    && rm -f /tmp/s6-overlay-noarch.tar.xz
+
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp/s6-overlay-x86_64.tar.xz
+RUN tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz \
+    && rm -f /tmp/s6-overlay-x86_64.tar.xz
+
 COPY images/mt5-headless/entrypoint.sh /entrypoint.sh
 COPY images/mt5-headless/scripts/ /scripts/
 COPY vendor/bridge/ /opt/bridge/
@@ -61,4 +72,5 @@ RUN chmod +x /entrypoint.sh /scripts/*.sh \
 
 VOLUME /config/.wine
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/init"]
+CMD ["/entrypoint.sh"]
