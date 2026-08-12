@@ -8,6 +8,7 @@ ENV WINEARCH=win64
 ENV DISPLAY=:99
 ENV WINEDEBUG=-all
 ENV PATH="/opt/wine-stable/bin:${PATH}"
+ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 
 RUN dpkg --add-architecture i386 && \
     apt-get update && \
@@ -71,7 +72,8 @@ COPY vendor/mql5/ /vendor/mql5/
 
 RUN chmod +x /entrypoint.sh /scripts/*.sh /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s6-rc.d/window-manager/run \
     && sed -i 's/\r$//' /entrypoint.sh /scripts/*.sh /scripts/configure_nt5_service.py \
-    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s6-rc.d/window-manager/run
+    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s6-rc.d/window-manager/run \
+    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/wine-bootstrap/type /etc/s6-overlay/s6-rc.d/wine-bootstrap/up
 
 VOLUME /config/.wine
 

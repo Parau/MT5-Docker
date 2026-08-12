@@ -9,10 +9,6 @@ export DISPLAY="${DISPLAY:-:99}"
 export WINEDEBUG="${WINEDEBUG:--all}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/runtime-root}"
 
-RESET_WINEPREFIX="${RESET_WINEPREFIX:-0}"
-BOOTSTRAP_TIMEOUT_SECONDS="${BOOTSTRAP_TIMEOUT_SECONDS:-420}"
-
-MONO_URL="${MONO_URL:-https://dl.winehq.org/wine/wine-mono/10.3.0/wine-mono-10.3.0-x86.msi}"
 INSTALL_MT5="${INSTALL_MT5:-0}"
 MT5_SETUP_URL="${MT5_SETUP_URL:-https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe}"
 MT5_INSTALLER="$WINEPREFIX/drive_c/mt5setup.exe"
@@ -41,65 +37,6 @@ cleanup() {
 }
 
 trap cleanup EXIT
-
-run_wine_nonfatal() {
-    local label="$1"
-    shift
-
-    echo "$label"
-
-    set +e
-    timeout "${BOOTSTRAP_TIMEOUT_SECONDS}s" "$@"
-    local status=$?
-    set -e
-
-    echo "$label retornou código: $status"
-
-    if [ "$status" -eq 124 ]; then
-        echo "AVISO: comando atingiu timeout, mas não vamos abortar imediatamente."
-    elif [ "$status" -ne 0 ]; then
-        echo "AVISO: comando retornou erro, mas não vamos abortar imediatamente."
-    fi
-
-    echo "Processos Wine após: $label"
-    ps -ef | grep -E "wine|wineserver|wineboot|winedevice|rundll32" | grep -v grep || true
-
-    echo "kernel32.dll encontrados após: $label"
-    find "$WINEPREFIX/drive_c/windows" -iname "kernel32.dll" 2>/dev/null || true
-}
-
-wait_for_wine_bootstrap() {
-    echo "Aguardando estabilização dos processos iniciais do Wine..."
-
-    for i in $(seq 1 "$BOOTSTRAP_TIMEOUT_SECONDS"); do
-        HAS_64=0
-        HAS_32=0
-        HAS_BOOT_PROCS=0
-
-        [ -f "$WINEPREFIX/drive_c/windows/system32/kernel32.dll" ] && HAS_64=1
-        [ -f "$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll" ] && HAS_32=1
-
-        if pgrep -f "wineboot.exe|winedevice.exe|rundll32.exe setupapi" >/dev/null; then
-            HAS_BOOT_PROCS=1
-        fi
-
-        if [ "$HAS_64" = "1" ] && [ "$HAS_32" = "1" ] && [ "$HAS_BOOT_PROCS" = "0" ]; then
-            echo "Bootstrap do Wine parece concluído."
-            return 0
-        fi
-
-        if [ $((i % 10)) -eq 0 ]; then
-            echo "Aguardando Wine... ${i}/${BOOTSTRAP_TIMEOUT_SECONDS}s | kernel32_64=$HAS_64 kernel32_32=$HAS_32 boot_procs=$HAS_BOOT_PROCS"
-            ps -ef | grep -E "wineboot|winedevice|rundll32|wineserver" | grep -v grep || true
-            find "$WINEPREFIX/drive_c/windows" -iname "kernel32.dll" 2>/dev/null || true
-        fi
-
-        sleep 1
-    done
-
-    echo "AVISO: Wine não atingiu estado totalmente estável dentro do tempo esperado."
-    return 1
-}
 
 start_vnc() {
     if [ "$ENABLE_VNC" != "1" ]; then
@@ -149,29 +86,13 @@ start_vnc() {
     fi
 }
 
-echo "Wine:"
-wine --version
-which wine
-
 echo "WINEPREFIX=$WINEPREFIX"
 echo "WINEARCH=$WINEARCH"
 echo "DISPLAY=$DISPLAY"
 echo "WINEDEBUG=$WINEDEBUG"
-echo "BOOTSTRAP_TIMEOUT_SECONDS=$BOOTSTRAP_TIMEOUT_SECONDS"
 echo "INSTALL_MT5=$INSTALL_MT5"
 echo "MT5_INSTALL_MODE=$MT5_INSTALL_MODE"
 echo "MT5_EXE=$MT5_EXE"
-
-mkdir -p "$WINEPREFIX"
-mkdir -p "$XDG_RUNTIME_DIR"
-chmod 700 "$XDG_RUNTIME_DIR"
-
-if [ "$RESET_WINEPREFIX" = "1" ]; then
-    echo "RESET_WINEPREFIX=1. Limpando conteúdo do prefixo Wine..."
-    find "$WINEPREFIX" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-else
-    echo "RESET_WINEPREFIX=$RESET_WINEPREFIX. Preservando prefixo existente."
-fi
 
 echo "Backend gráfico é gerenciado pelo serviço s6 'display'."
 echo "Aguardando DISPLAY=$DISPLAY ficar disponível..."
@@ -239,68 +160,7 @@ else
     start_vnc
 fi
 
-if [ ! -e "$WINEPREFIX/drive_c/windows/mono" ]; then
-    echo "Wine Mono não encontrado. Baixando Wine Mono..."
-    curl -fL --retry 3 -o /tmp/wine-mono.msi "$MONO_URL"
-
-    run_wine_nonfatal \
-        "Instalando Wine Mono para disparar bootstrap do prefixo..." \
-        env WINEDLLOVERRIDES=mscoree=d wine msiexec /i /tmp/wine-mono.msi /qn
-
-    echo "Aguardando wineserver após Mono..."
-    timeout "${BOOTSTRAP_TIMEOUT_SECONDS}s" wineserver -w || true
-
-    rm -f /tmp/wine-mono.msi
-else
-    echo "Wine Mono já instalado."
-fi
-
-echo "Configurando Wine para Windows 11, seguindo o setup oficial da MetaTrader..."
-set +e
-winecfg -v=win11
-WINECFG_STATUS=$?
-set -e
-
-echo "winecfg win11 retornou código: $WINECFG_STATUS"
-
-echo "Aguardando wineserver após winecfg win11..."
-timeout "${BOOTSTRAP_TIMEOUT_SECONDS}s" wineserver -w || true
-
-wait_for_wine_bootstrap || true
-
-echo "Estado final dos processos Wine:"
-ps -ef | grep -E "wine|wineserver|wineboot|winedevice|rundll32" | grep -v grep || true
-
-echo "Arquivos kernel32 encontrados:"
-find "$WINEPREFIX/drive_c/windows" -iname "kernel32.dll" 2>/dev/null || true
-
-WINE_KERNEL32_64="$WINEPREFIX/drive_c/windows/system32/kernel32.dll"
-WINE_KERNEL32_32="$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll"
-
-echo "Validando kernel32.dll 64-bit e 32-bit..."
-if [ ! -f "$WINE_KERNEL32_64" ]; then
-    echo "ERRO: kernel32.dll 64-bit não encontrado em $WINE_KERNEL32_64"
-    find "$WINEPREFIX/drive_c/windows" -iname "kernel32.dll" 2>/dev/null || true
-    exit 1
-fi
-
-if [ ! -f "$WINE_KERNEL32_32" ]; then
-    echo "ERRO: kernel32.dll 32-bit não encontrado em $WINE_KERNEL32_32"
-    find "$WINEPREFIX/drive_c/windows" -iname "kernel32.dll" 2>/dev/null || true
-    exit 1
-fi
-
-echo "kernel32.dll 64-bit encontrado:"
-ls -la "$WINE_KERNEL32_64"
-
-echo "kernel32.dll 32-bit encontrado:"
-ls -la "$WINE_KERNEL32_32"
-
-echo "Validando execução básica do Wine..."
-timeout 60s wine cmd /c ver
-
-echo "Validando comando simples no Wine..."
-timeout 60s wine cmd /c echo Wine bootstrap OK
+echo "Wine bootstrap é gerenciado pelo oneshot s6 'wine-bootstrap' e já foi concluído antes do CMD."
 
 if [ "$INSTALL_MT5" = "1" ]; then
     echo "INSTALL_MT5=1. Iniciando etapa de instalação do MetaTrader 5..."
