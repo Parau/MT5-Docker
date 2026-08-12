@@ -9,14 +9,7 @@ export DISPLAY="${DISPLAY:-:99}"
 export WINEDEBUG="${WINEDEBUG:--all}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/runtime-root}"
 
-INSTALL_MT5="${INSTALL_MT5:-0}"
-MT5_SETUP_URL="${MT5_SETUP_URL:-https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe}"
-MT5_INSTALLER="$WINEPREFIX/drive_c/mt5setup.exe"
 MT5_EXE="${MT5_EXE:-$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe}"
-
-WEBVIEW_URL="${WEBVIEW_URL:-https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/f2910a1e-e5a6-4f17-b52d-7faf525d17f8/MicrosoftEdgeWebview2Setup.exe}"
-WEBVIEW_INSTALLER="$WINEPREFIX/drive_c/webview2.exe"
-MT5_INSTALL_MODE="${MT5_INSTALL_MODE:-manual}"
 
 ENABLE_VNC="${ENABLE_VNC:-1}"
 VNC_PORT="${VNC_PORT:-5900}"
@@ -90,8 +83,6 @@ echo "WINEPREFIX=$WINEPREFIX"
 echo "WINEARCH=$WINEARCH"
 echo "DISPLAY=$DISPLAY"
 echo "WINEDEBUG=$WINEDEBUG"
-echo "INSTALL_MT5=$INSTALL_MT5"
-echo "MT5_INSTALL_MODE=$MT5_INSTALL_MODE"
 echo "MT5_EXE=$MT5_EXE"
 
 echo "Backend gráfico é gerenciado pelo serviço s6 'display'."
@@ -162,73 +153,7 @@ fi
 
 echo "Wine bootstrap é gerenciado pelo oneshot s6 'wine-bootstrap' e já foi concluído antes do CMD."
 
-if [ "$INSTALL_MT5" = "1" ]; then
-    echo "INSTALL_MT5=1. Iniciando etapa de instalação do MetaTrader 5..."
-
-    if [ -f "$MT5_EXE" ]; then
-        echo "MT5 já instalado:"
-        ls -la "$MT5_EXE"
-    else
-        echo "MT5 ainda não encontrado em:"
-        echo "$MT5_EXE"
-
-        echo "Baixando MetaTrader e WebView2 Runtime, seguindo a ordem do setup oficial..."
-        curl "$MT5_SETUP_URL" --output "$MT5_INSTALLER"
-        curl "$WEBVIEW_URL" --output "$WEBVIEW_INSTALLER"
-
-        echo "Instalador MT5 baixado:"
-        ls -lh "$MT5_INSTALLER" || true
-
-        echo "Instalador WebView2 baixado:"
-        ls -lh "$WEBVIEW_INSTALLER" || true
-
-        echo "Instalando WebView2 Runtime, como no setup oficial..."
-        set +e
-        wine "$WEBVIEW_INSTALLER" /silent /install
-        WEBVIEW_STATUS=$?
-        set -e
-
-        echo "WebView2 retornou código: $WEBVIEW_STATUS"
-
-        echo "Instalando MetaTrader 5. MT5_INSTALL_MODE=$MT5_INSTALL_MODE"
-        set +e
-
-        if [ "$MT5_INSTALL_MODE" = "auto" ]; then
-            echo "Modo auto: executando MT5 com /auto, estilo gmag11."
-            wine "$MT5_INSTALLER" "/auto" &
-            MT5_INSTALL_PID=$!
-            wait "$MT5_INSTALL_PID"
-            MT5_INSTALL_STATUS=$?
-        else
-            echo "Modo manual: executando MT5 sem /auto, como no setup oficial da MetaTrader."
-            wine "$MT5_INSTALLER"
-            MT5_INSTALL_STATUS=$?
-        fi
-
-        set -e
-
-        echo "Instalador MT5 retornou código: $MT5_INSTALL_STATUS"
-
-        rm -f "$WEBVIEW_INSTALLER"
-        rm -f "$MT5_INSTALLER"
-
-        if [ ! -f "$MT5_EXE" ]; then
-            echo "ERRO: terminal64.exe não encontrado após instalação."
-            echo "Procurando terminal64.exe dentro do prefixo..."
-            find "$WINEPREFIX/drive_c" -iname "terminal64.exe" 2>/dev/null || true
-            exit 1
-        fi
-
-        echo "MT5 instalado com sucesso:"
-        ls -la "$MT5_EXE"
-    fi
-else
-    echo "INSTALL_MT5=$INSTALL_MT5. Etapa de instalação do MT5 ignorada."
-fi
-
-# ATE AQUI FOI PARA INSTALAR AGORA COMENTO PARA INICIAR O MT5
-# echo "SUCESSO: Debian Bookworm + WineHQ validado e etapa MT5 concluída. O MT5 ainda não foi iniciado como serviço."
-# exit 0
+/scripts/install_mt5.sh
 
 ##########################
 
