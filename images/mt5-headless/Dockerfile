@@ -62,13 +62,16 @@ ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLA
 RUN tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz \
     && rm -f /tmp/s6-overlay-x86_64.tar.xz
 
+COPY images/mt5-headless/s6-rc.d/ /etc/s6-overlay/s6-rc.d/
+COPY images/mt5-headless/user-bundles.d/ /etc/s6-overlay/user-bundles.d/
 COPY images/mt5-headless/entrypoint.sh /entrypoint.sh
 COPY images/mt5-headless/scripts/ /scripts/
 COPY vendor/bridge/ /opt/bridge/
 COPY vendor/mql5/ /vendor/mql5/
 
-RUN chmod +x /entrypoint.sh /scripts/*.sh \
-    && sed -i 's/\r$//' /entrypoint.sh /scripts/*.sh /scripts/configure_nt5_service.py
+RUN chmod +x /entrypoint.sh /scripts/*.sh /etc/s6-overlay/s6-rc.d/display/run \
+    && sed -i 's/\r$//' /entrypoint.sh /scripts/*.sh /scripts/configure_nt5_service.py \
+    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/display/run
 
 VOLUME /config/.wine
 

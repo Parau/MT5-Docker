@@ -33,8 +33,6 @@ VNC_GEOMETRY="${VNC_GEOMETRY:-1280x800}"
 VNC_DEPTH="${VNC_DEPTH:-24}"
 XVNC_LOG_FILE="${XVNC_LOG_FILE:-/tmp/xvnc.log}"
 
-XVFB_PID=""
-XVNC_PID=""
 OPENBOX_PID=""
 
 cleanup() {
@@ -44,16 +42,6 @@ cleanup() {
     if [ -n "${OPENBOX_PID}" ]; then
         kill "${OPENBOX_PID}" 2>/dev/null || true
         wait "${OPENBOX_PID}" 2>/dev/null || true
-    fi
-
-    if [ -n "${XVFB_PID}" ]; then
-        kill "${XVFB_PID}" 2>/dev/null || true
-        wait "${XVFB_PID}" 2>/dev/null || true
-    fi
-
-    if [ -n "${XVNC_PID}" ]; then
-        kill "${XVNC_PID}" 2>/dev/null || true
-        wait "${XVNC_PID}" 2>/dev/null || true
     fi
 
     pkill x11vnc 2>/dev/null || true
@@ -192,58 +180,8 @@ else
     echo "RESET_WINEPREFIX=$RESET_WINEPREFIX. Preservando prefixo existente."
 fi
 
-echo "Iniciando backend gráfico: DISPLAY_BACKEND=$DISPLAY_BACKEND"
-if [ "$DISPLAY_BACKEND" = "xvnc" ] && [ "$ENABLE_VNC" = "1" ]; then
-    echo "Iniciando TigerVNC Server / Xvnc..."
-    echo "DISPLAY=$DISPLAY"
-    echo "VNC_GEOMETRY=$VNC_GEOMETRY"
-    echo "VNC_DEPTH=$VNC_DEPTH"
-    echo "VNC_PORT=$VNC_PORT"
-
-    if command -v Xvnc >/dev/null 2>&1; then
-        XVNC_BIN="$(command -v Xvnc)"
-    elif command -v Xtigervnc >/dev/null 2>&1; then
-        XVNC_BIN="$(command -v Xtigervnc)"
-    else
-        echo "ERRO: Xvnc/Xtigervnc não encontrado. Verifique se tigervnc-standalone-server foi instalado."
-        exit 1
-    fi
-
-    if [ -n "$VNC_PASSWORD" ]; then
-        echo "VNC com senha habilitada para Xvnc."
-
-        umask 077
-        printf '%s\n' "$VNC_PASSWORD" | vncpasswd -f > "$VNC_PASSWD_FILE"
-        chmod 600 "$VNC_PASSWD_FILE"
-
-        "$XVNC_BIN" "$DISPLAY" \
-            -geometry "$VNC_GEOMETRY" \
-            -depth "$VNC_DEPTH" \
-            -SecurityTypes VncAuth \
-            -PasswordFile "$VNC_PASSWD_FILE" \
-            -rfbport "$VNC_PORT" \
-            -localhost no \
-            >"$XVNC_LOG_FILE" 2>&1 &
-    else
-        echo "VNC sem senha habilitado. Use apenas com porta publicada em localhost."
-
-        "$XVNC_BIN" "$DISPLAY" \
-            -geometry "$VNC_GEOMETRY" \
-            -depth "$VNC_DEPTH" \
-            -SecurityTypes None \
-            -rfbport "$VNC_PORT" \
-            -localhost no \
-            >"$XVNC_LOG_FILE" 2>&1 &
-    fi
-
-    XVNC_PID=$!
-else
-    echo "Iniciando Xvfb..."
-    Xvfb "$DISPLAY" -screen 0 1024x768x16 -ac +extension GLX +render -noreset &
-    XVFB_PID=$!
-fi
-
-echo "Aguardando X server responder..."
+echo "Backend gráfico é gerenciado pelo serviço s6 'display'."
+echo "Aguardando DISPLAY=$DISPLAY ficar disponível..."
 for i in $(seq 1 30); do
     if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
         echo "X server pronto."
@@ -257,10 +195,15 @@ done
 if ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
     echo "ERRO: X server não ficou disponível em $DISPLAY."
 
+    echo "Diagnóstico serviço s6 display:"
+    /command/s6-svstat /run/service/display 2>/dev/null || true
+
+    echo "Processos gráficos:"
+    ps -ef | grep -E "Xvnc|Xtigervnc|Xvfb" | grep -v grep || true
+
     echo "Log Xvnc:"
     cat "$XVNC_LOG_FILE" 2>/dev/null || true
 
-    echo "Log Xvfb não disponível diretamente."
     exit 1
 fi
 

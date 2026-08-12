@@ -1,0 +1,98 @@
+#!/command/with-contenv bash
+# s6 longrun: own Xvnc or Xvfb display backend (single /proc snapshot per poll in lifecycle is elsewhere).
+#
+# Data flow: started by s6 before CMD; entrypoint waits via xdpyinfo. Input from container env
+# via with-contenv; daemon exec uses minimal sanitized environment.
+# Limitations: x11vnc remains in entrypoint; Openbox/Wine/MT5/bridge not managed here.
+set -Eeuo pipefail
+
+readonly LOG_PREFIX="[DISPLAY]"
+
+log() {
+    echo "${LOG_PREFIX} $*"
+}
+
+DISPLAY="${DISPLAY:-:99}"
+DISPLAY_BACKEND="${DISPLAY_BACKEND:-xvnc}"
+ENABLE_VNC="${ENABLE_VNC:-1}"
+VNC_PORT="${VNC_PORT:-5900}"
+VNC_GEOMETRY="${VNC_GEOMETRY:-1280x800}"
+VNC_DEPTH="${VNC_DEPTH:-24}"
+VNC_PASSWD_FILE="${VNC_PASSWD_FILE:-/tmp/vncpasswd}"
+XVNC_LOG_FILE="${XVNC_LOG_FILE:-/tmp/xvnc.log}"
+
+exec_xvfb() {
+    log "backend=xvfb"
+    log "display=${DISPLAY}"
+    exec env -i \
+        PATH="${PATH}" \
+        HOME="${HOME:-/root}" \
+        DISPLAY="${DISPLAY}" \
+        Xvfb "${DISPLAY}" \
+            -screen 0 1024x768x16 \
+            -ac \
+            +extension GLX \
+            +render \
+            -noreset
+}
+
+exec_xvnc() {
+    local xvnc_bin auth_mode
+
+    if command -v Xvnc >/dev/null 2>&1; then
+        xvnc_bin="$(command -v Xvnc)"
+    elif command -v Xtigervnc >/dev/null 2>&1; then
+        xvnc_bin="$(command -v Xtigervnc)"
+    else
+        log "error=Xvnc/Xtigervnc not found"
+        exit 1
+    fi
+
+    if [ -n "${VNC_PASSWORD:-}" ]; then
+        auth_mode="VncAuth"
+        umask 077
+        printf '%s\n' "$VNC_PASSWORD" | vncpasswd -f > "$VNC_PASSWD_FILE"
+        chmod 600 "$VNC_PASSWD_FILE"
+    else
+        auth_mode="None"
+        rm -f "$VNC_PASSWD_FILE"
+    fi
+
+    log "backend=xvnc"
+    log "display=${DISPLAY}"
+    log "port=${VNC_PORT}"
+    log "auth=${auth_mode}"
+
+    if [ "$auth_mode" = "VncAuth" ]; then
+        exec env -i \
+            PATH="${PATH}" \
+            HOME="${HOME:-/root}" \
+            DISPLAY="${DISPLAY}" \
+            "$xvnc_bin" "${DISPLAY}" \
+                -geometry "${VNC_GEOMETRY}" \
+                -depth "${VNC_DEPTH}" \
+                -SecurityTypes VncAuth \
+                -PasswordFile "${VNC_PASSWD_FILE}" \
+                -rfbport "${VNC_PORT}" \
+                -localhost no \
+            >"${XVNC_LOG_FILE}" 2>&1
+    fi
+
+    exec env -i \
+        PATH="${PATH}" \
+        HOME="${HOME:-/root}" \
+        DISPLAY="${DISPLAY}" \
+        "$xvnc_bin" "${DISPLAY}" \
+            -geometry "${VNC_GEOMETRY}" \
+            -depth "${VNC_DEPTH}" \
+            -SecurityTypes None \
+            -rfbport "${VNC_PORT}" \
+            -localhost no \
+        >"${XVNC_LOG_FILE}" 2>&1
+}
+
+if [ "$DISPLAY_BACKEND" = "xvnc" ] && [ "$ENABLE_VNC" = "1" ]; then
+    exec_xvnc
+else
+    exec_xvfb
+fi
