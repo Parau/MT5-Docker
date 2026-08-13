@@ -172,10 +172,7 @@ if [ "$RUN_MT5" = "1" ]; then
     fi
 
     echo "Deploy MQL5 é gerenciado pelo oneshot s6 'deploy-mql5' e já foi processado antes do CMD."
-
-    if [ "${CONFIGURE_NT5:-1}" = "1" ]; then
-        /scripts/configure_nt5.sh || echo "AVISO: configure NT5 falhou (continuando)."
-    fi
+    echo "Configuração NT5 é gerenciada pelo oneshot s6 'configure-nt5' e já foi processada antes do CMD."
 
     MT5_EXE="$MT5_EXE" \
     MT5_CMD_OPTIONS="$MT5_CMD_OPTIONS" \

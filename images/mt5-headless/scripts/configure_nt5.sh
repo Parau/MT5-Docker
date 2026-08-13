@@ -1,11 +1,10 @@
 #!/command/with-contenv bash
 # Apply NT5TickFeedService inputs to MT5 Config/*.ini (UTF-16).
 #
-# Data flow: still invoked from CMD after deploy-mql5; runs
-# configure_nt5_service.py against the Wine MT5 Config tree.
-# Limitations: not an s6 oneshot yet; raw failures remain nonzero;
-# container-level nonfatal policy stays in the entrypoint wrapper;
-# a future oneshot promotion needs an explicit policy wrapper.
+# Raw NT5 configuration operation invoked by configure_nt5_oneshot.sh.
+# Contract is frozen by tests/test_configure_nt5.sh.
+# Raw operational failures remain nonzero here; the s6 wrapper preserves
+# the legacy container-level nonfatal policy.
 # python3 is required only when CONFIGURE_NT5=1.
 set -Eeuo pipefail
 
