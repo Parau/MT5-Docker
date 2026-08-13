@@ -171,9 +171,7 @@ if [ "$RUN_MT5" = "1" ]; then
         exit 1
     fi
 
-    if [ "${DEPLOY_MQL5:-1}" = "1" ]; then
-        /scripts/deploy_mql5.sh || echo "AVISO: deploy MQL5 falhou (continuando)."
-    fi
+    echo "Deploy MQL5 é gerenciado pelo oneshot s6 'deploy-mql5' e já foi processado antes do CMD."
 
     if [ "${CONFIGURE_NT5:-1}" = "1" ]; then
         /scripts/configure_nt5.sh || echo "AVISO: configure NT5 falhou (continuando)."

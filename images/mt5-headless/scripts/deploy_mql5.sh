@@ -1,12 +1,12 @@
 #!/command/with-contenv bash
 # Deploy vendored MQL5 Service + Include tree into the MT5 portable data folder.
 #
-# Data flow: still invoked from CMD after install-mt5; copies /vendor/mql5 (or
-# VENDOR_MQL5_ROOT) into the Wine MT5 MQL5 tree for NT5TickFeedService.
-# Prepared for a future s6 oneshot promotion; DEPLOY_MQL5!=1 is a no-op.
-# Limitations: not an s6 oneshot yet; missing .ex5 is warning-only; WebSocket
-# copy errors are tolerated (|| true); mkdir/cp failures remain nonzero for the
-# entrypoint wrapper to convert into a nonfatal warning.
+# Data flow: core deploy operation invoked by deploy_mql5_oneshot.sh (s6 oneshot
+# deploy-mql5). Copies /vendor/mql5 (or VENDOR_MQL5_ROOT) into the Wine MT5 MQL5
+# tree for NT5TickFeedService. Contract is frozen by tests/test_deploy_mql5.sh.
+# Limitations: raw operational failures remain nonzero here; the s6 wrapper
+# preserves the legacy container-level nonfatal policy. Missing .ex5 is
+# warning-only; WebSocket copy errors are tolerated (|| true).
 set -Eeuo pipefail
 
 readonly LOG_PREFIX="[DEPLOY-MQL5]"
