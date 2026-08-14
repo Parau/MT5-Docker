@@ -3,7 +3,7 @@
 #
 # Data flow: sources production lifecycle (or runs it as $0); fake wine + function
 # seams cover main/spawn/signals without real Wine. Limitations: no Docker/broker
-# in this suite; TERM child-ownership is demonstrated with a fake sleep child.
+# in this suite; TERM to the lifecycle now TERMs the fake child (04H-B ownership).
 # Does not replace tests/test_mt5_lifecycle.sh (handoff classifiers/scenarios).
 set -Eeuo pipefail
 
@@ -45,6 +45,7 @@ DEFAULTS_OUT="$(
     env -u MT5_EXE -u MT5_CMD_OPTIONS \
         -u MT5_HANDOFF_GRACE_SECONDS -u MT5_UPDATE_TIMEOUT_SECONDS \
         -u MT5_RELAUNCH_STABLE_SECONDS -u MT5_POLL_SECONDS \
+        -u MT5_SHUTDOWN_TIMEOUT_SECONDS -u MT5_SHUTDOWN_STABLE_SECONDS \
         WINEPREFIX=/tmp/contract-wineprefix \
         bash -c '
             set -Eeuo pipefail
@@ -54,6 +55,8 @@ DEFAULTS_OUT="$(
             printf "update=%s\n" "$MT5_UPDATE_TIMEOUT_SECONDS"
             printf "stable=%s\n" "$MT5_RELAUNCH_STABLE_SECONDS"
             printf "poll=%s\n" "$MT5_POLL_SECONDS"
+            printf "shutdown_timeout=%s\n" "$MT5_SHUTDOWN_TIMEOUT_SECONDS"
+            printf "shutdown_stable=%s\n" "$MT5_SHUTDOWN_STABLE_SECONDS"
             printf "opts=%s\n" "$MT5_CMD_OPTIONS"
             printf "exe=%s\n" "$MT5_EXE"
         ' bash "$SCRIPT"
@@ -62,9 +65,11 @@ echo "$DEFAULTS_OUT" | grep -qx "grace=8" || fail "default grace"
 echo "$DEFAULTS_OUT" | grep -qx "update=180" || fail "default update timeout"
 echo "$DEFAULTS_OUT" | grep -qx "stable=5" || fail "default stable"
 echo "$DEFAULTS_OUT" | grep -qx "poll=1" || fail "default poll"
+echo "$DEFAULTS_OUT" | grep -qx "shutdown_timeout=10" || fail "default shutdown timeout"
+echo "$DEFAULTS_OUT" | grep -qx "shutdown_stable=2" || fail "default shutdown stable"
 echo "$DEFAULTS_OUT" | grep -qx "opts=" || fail "default empty MT5_CMD_OPTIONS"
 echo "$DEFAULTS_OUT" | grep -Fq "/tmp/contract-wineprefix/drive_c/Program Files/MetaTrader 5/terminal64.exe" || fail "default MT5_EXE under WINEPREFIX"
-TESTS_RUN=$((TESTS_RUN + 6))
+TESTS_RUN=$((TESTS_RUN + 8))
 pass "defaults frozen"
 # shellcheck source=../images/mt5-headless/scripts/mt5_lifecycle.sh
 source "$SCRIPT"
@@ -309,7 +314,9 @@ echo "=== test 11: TERM handler ==="
 set +e
 OUTPUT="$(
     STOP_REQUESTED=0
+    SHUTDOWN_IN_PROGRESS=0
     CURRENT_STATE="RUNNING"
+    shutdown_mt5_processes() { return 0; }
     on_term TERM
     echo "on_term_returned"
 )"
@@ -317,15 +324,18 @@ STATUS=$?
 set -e
 assert_eq "0" "$STATUS" "TERM handler exit"
 echo "$OUTPUT" | grep -q "state=STOPPING signal=TERM" || fail "TERM STOPPING log"
+echo "$OUTPUT" | grep -q "shutdown_result=completed" || fail "TERM completed log"
 echo "$OUTPUT" | grep -q "on_term_returned" && fail "on_term must exit"
-TESTS_RUN=$((TESTS_RUN + 1))
+TESTS_RUN=$((TESTS_RUN + 2))
 pass "TERM stops wrapper with exit 0"
 
 echo "=== test 12: INT handler ==="
 set +e
 OUTPUT="$(
     STOP_REQUESTED=0
+    SHUTDOWN_IN_PROGRESS=0
     CURRENT_STATE="RUNNING"
+    shutdown_mt5_processes() { return 0; }
     on_term INT
     echo "on_term_returned"
 )"
@@ -333,11 +343,12 @@ STATUS=$?
 set -e
 assert_eq "0" "$STATUS" "INT handler exit"
 echo "$OUTPUT" | grep -q "state=STOPPING signal=INT" || fail "INT STOPPING log"
+echo "$OUTPUT" | grep -q "shutdown_result=completed" || fail "INT completed log"
 echo "$OUTPUT" | grep -q "on_term_returned" && fail "on_term INT must exit"
-TESTS_RUN=$((TESTS_RUN + 1))
+TESTS_RUN=$((TESTS_RUN + 2))
 pass "INT stops wrapper with exit 0"
 
-echo "=== test 13: TERM does not forward to child ==="
+echo "=== test 13: TERM to lifecycle TERMs fake child ==="
 CASE_DIR="$(mktemp -d /tmp/mt5-lifecycle-contract.XXXXXX)"
 FAKE_BIN="${CASE_DIR}/bin"
 mkdir -p "$FAKE_BIN" "${CASE_DIR}/mt5"
@@ -351,6 +362,9 @@ chmod +x "${FAKE_BIN}/wine"
 export WINE_PID_FILE="${CASE_DIR}/wine.pid"
 export MT5_EXE="${CASE_DIR}/mt5/terminal64.exe"
 export MT5_CMD_OPTIONS=""
+export MT5_SHUTDOWN_TIMEOUT_SECONDS=8
+export MT5_SHUTDOWN_STABLE_SECONDS=1
+export MT5_POLL_SECONDS=1
 LOG="${CASE_DIR}/lifecycle.log"
 PATH="${FAKE_BIN}:${PATH}" bash "$SCRIPT" >"$LOG" 2>&1 &
 LIFECYCLE_PID=$!
@@ -364,7 +378,6 @@ for _i in $(seq 1 50); do
 done
 [ -n "$CHILD_PID" ] || fail "did not observe RUNNING/child pid"
 kill -0 "$CHILD_PID" 2>/dev/null || fail "fake child not alive before TERM"
-# Signal only the lifecycle PID, not the process group.
 kill -TERM "$LIFECYCLE_PID"
 set +e
 wait "$LIFECYCLE_PID"
@@ -372,21 +385,28 @@ LIFE_STATUS=$?
 set -e
 assert_eq "0" "$LIFE_STATUS" "lifecycle TERM exit"
 grep -q "state=STOPPING signal=TERM" "$LOG" || fail "STOPPING log missing"
-CHILD_ALIVE=0
-if kill -0 "$CHILD_PID" 2>/dev/null; then
-    CHILD_ALIVE=1
+grep -q "shutdown_begin source_signal=TERM child_signal=TERM" "$LOG" || fail "shutdown_begin missing"
+grep -q "shutdown_signal signal=TERM" "$LOG" || fail "shutdown_signal missing"
+grep -q "shutdown_result=completed" "$LOG" || fail "shutdown completed missing"
+CHILD_GONE=0
+if ! kill -0 "$CHILD_PID" 2>/dev/null; then
+    CHILD_GONE=1
+elif awk '/^State:/ { exit ($2 == "Z") ? 0 : 1 }' "/proc/${CHILD_PID}/status" 2>/dev/null; then
+    CHILD_GONE=1
 fi
-if [ "$CHILD_ALIVE" -ne 1 ]; then
-    echo "NOTE: fake child died after lifecycle TERM; investigating process group"
+if [ "$CHILD_GONE" -ne 1 ]; then
     echo "lifecycle_pid=${LIFECYCLE_PID} child_pid=${CHILD_PID}"
-    fail "current contract: child must survive TERM sent only to lifecycle"
+    cat "$LOG"
+    kill -TERM "$CHILD_PID" 2>/dev/null || true
+    kill -KILL "$CHILD_PID" 2>/dev/null || true
+    fail "04H-B contract: fake child must be terminated after lifecycle TERM"
 fi
-TESTS_RUN=$((TESTS_RUN + 2))
-echo "lifecycle_pid=${LIFECYCLE_PID} fake_child_pid=${CHILD_PID} child_survived=1"
+TESTS_RUN=$((TESTS_RUN + 5))
+echo "lifecycle_pid=${LIFECYCLE_PID} fake_child_pid=${CHILD_PID} child_gone=1"
 kill -TERM "$CHILD_PID" 2>/dev/null || true
 wait "$CHILD_PID" 2>/dev/null || true
 kill -KILL "$CHILD_PID" 2>/dev/null || true
-pass "TERM to lifecycle leaves fake Wine child alive (ownership gap frozen)"
+pass "TERM to lifecycle TERMs fake child and completes shutdown"
 rm -rf "$CASE_DIR"
 
 echo "=== test 14: readiness absent from executable body ==="
@@ -456,8 +476,11 @@ pass "EXIT_TERMINAL_DISAPPEARED=73 is reserved/currently unused"
 echo "=== test 18: lifecycle does not call wineserver -k ==="
 BODY="$(executable_body "$SCRIPT")"
 echo "$BODY" | grep -Fq 'wineserver -k' && fail "lifecycle executable body must not wineserver -k"
-TESTS_RUN=$((TESTS_RUN + 1))
-pass "wineserver -k cleanup stays outside lifecycle"
+echo "$BODY" | grep -Eq 'wineboot|pkill' && fail "lifecycle must not use wineboot/pkill"
+echo "$BODY" | grep -Fq 'kill -KILL' && fail "lifecycle must not SIGKILL"
+echo "$BODY" | grep -Eq 'kill -TERM -- -|kill -- -' && fail "lifecycle must not process-group kill"
+TESTS_RUN=$((TESTS_RUN + 4))
+pass "wineserver -k cleanup stays outside lifecycle; no wineboot/pkill/SIGKILL/pg"
 
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"

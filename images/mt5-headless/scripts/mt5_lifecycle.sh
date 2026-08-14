@@ -1,14 +1,16 @@
 #!/bin/bash
 # MT5 terminal lifecycle wrapper: preserve LiveUpdate handoff without wineserver -k.
 #
-# Data flow: still owned by CMD after python-bootstrap; entrypoint waits this
-# process for container liveness, then start_bridge.sh runs in background.
+# Data flow: CMD starts this lifecycle after python-bootstrap, starts
+# start_bridge.sh in background, then waits on this lifecycle process as
+# the container-liveness owner.
 # LiveUpdate handoff is supported (updater / skipupdate → RUNNING_RELAUNCHED).
 # Crash autorestart does not exist: one wine spawn, then handoff or fatal exit.
 # RUNNING is process/lifecycle liveness only, not MT5/API/RPyC readiness.
-# TERM/INT currently stop the wrapper with exit 0 and do not forward to the
-# Wine child; caller entrypoint cleanup still runs wineserver -k on EXIT.
-# Promotion to s6 longrun requires an explicit exit/shutdown policy first.
+# TERM/INT stop the wrapper with exit 0 after targeted TERM to the initial
+# child and normal/relaunch terminals. LiveUpdate updaters are not signaled;
+# timeout yields shutdown_result=fallback_required and the entrypoint EXIT
+# trap still runs wineserver -k as prefix-wide last resort.
 # Limitations: no crash autorestart, no bridge/VNC/Wine bootstrap, no wineserver -k.
 set -Eeuo pipefail
 
@@ -25,9 +27,13 @@ MT5_HANDOFF_GRACE_SECONDS="${MT5_HANDOFF_GRACE_SECONDS:-8}"
 MT5_UPDATE_TIMEOUT_SECONDS="${MT5_UPDATE_TIMEOUT_SECONDS:-180}"
 MT5_RELAUNCH_STABLE_SECONDS="${MT5_RELAUNCH_STABLE_SECONDS:-5}"
 MT5_POLL_SECONDS="${MT5_POLL_SECONDS:-1}"
+MT5_SHUTDOWN_TIMEOUT_SECONDS="${MT5_SHUTDOWN_TIMEOUT_SECONDS:-10}"
+MT5_SHUTDOWN_STABLE_SECONDS="${MT5_SHUTDOWN_STABLE_SECONDS:-2}"
 
 STOP_REQUESTED=0
+SHUTDOWN_IN_PROGRESS=0
 CURRENT_STATE="INIT"
+CURRENT_CHILD_PID=""
 
 log() {
     echo "${LOG_PREFIX} $*"
@@ -44,8 +50,19 @@ set_state() {
 }
 
 on_term() {
+    local source_signal="${1:-TERM}"
+    if [ "${SHUTDOWN_IN_PROGRESS}" -eq 1 ]; then
+        return 0
+    fi
+    SHUTDOWN_IN_PROGRESS=1
+    trap '' INT TERM
     STOP_REQUESTED=1
-    set_state "STOPPING" "signal=${1:-TERM}"
+    set_state "STOPPING" "signal=${source_signal}"
+    local shutdown_status=0
+    shutdown_mt5_processes "${source_signal}" || shutdown_status=$?
+    if [ "${shutdown_status}" -eq 0 ]; then
+        log "shutdown_result=completed"
+    fi
     exit 0
 }
 
@@ -141,6 +158,131 @@ pids_to_csv() {
         fi
     done
     printf '%s' "$joined"
+}
+
+process_is_active() {
+    local pid="${1:-}"
+    case "${pid}" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    if [ "${pid}" -le 1 ] || [ "${pid}" -eq "$$" ]; then
+        return 1
+    fi
+    local status_file="/proc/${pid}/status"
+    if [ ! -r "${status_file}" ]; then
+        return 1
+    fi
+    local state
+    state="$(awk '/^State:/ { print $2; exit }' "${status_file}" 2>/dev/null || true)"
+    if [ "${state}" = "Z" ]; then
+        return 1
+    fi
+    kill -0 "${pid}" 2>/dev/null || return 1
+    return 0
+}
+
+lifecycle_kill_term() {
+    local pid="$1"
+    kill -TERM "${pid}" 2>/dev/null || true
+}
+
+reap_current_child() {
+    if [ -z "${CURRENT_CHILD_PID:-}" ]; then
+        return 0
+    fi
+    if process_is_active "${CURRENT_CHILD_PID}"; then
+        return 0
+    fi
+    wait "${CURRENT_CHILD_PID}" 2>/dev/null || true
+}
+
+shutdown_mt5_processes() {
+    local source_signal="${1:-TERM}"
+    local child_signal="TERM"
+    local timeout_seconds="${MT5_SHUTDOWN_TIMEOUT_SECONDS}"
+    local stable_seconds="${MT5_SHUTDOWN_STABLE_SECONDS}"
+    local poll_seconds="${MT5_POLL_SECONDS}"
+    local elapsed=0
+    local stable_for=0
+    local updater_wait_logged=0
+    local updater_pids=()
+    local terminal_pids=()
+    local relaunch_pids=()
+    local -A signaled_pids=()
+
+    log "shutdown_begin source_signal=${source_signal} child_signal=${child_signal} timeout_seconds=${timeout_seconds} stable_seconds=${stable_seconds}"
+
+    while [ "${elapsed}" -lt "${timeout_seconds}" ]; do
+        scan_process_candidates updater_pids terminal_pids relaunch_pids
+
+        local -A seen_targets=()
+        local targets=()
+        local pid
+
+        if process_is_active "${CURRENT_CHILD_PID:-}"; then
+            seen_targets["${CURRENT_CHILD_PID}"]=1
+            targets+=("${CURRENT_CHILD_PID}")
+        fi
+        for pid in "${terminal_pids[@]}"; do
+            if [ -n "${seen_targets[${pid}]+x}" ]; then
+                continue
+            fi
+            seen_targets["${pid}"]=1
+            targets+=("${pid}")
+        done
+
+        if [ "${#targets[@]}" -gt 0 ]; then
+            local new_signal_pids=()
+            for pid in "${targets[@]}"; do
+                if [ -z "${signaled_pids[${pid}]+x}" ]; then
+                    new_signal_pids+=("${pid}")
+                    signaled_pids["${pid}"]=1
+                fi
+            done
+            if [ "${#new_signal_pids[@]}" -gt 0 ]; then
+                log "shutdown_signal signal=${child_signal} target_pids=$(pids_to_csv "${new_signal_pids[@]}")"
+            fi
+            for pid in "${targets[@]}"; do
+                lifecycle_kill_term "${pid}"
+            done
+        fi
+
+        local owned_active=0
+        if process_is_active "${CURRENT_CHILD_PID:-}"; then
+            owned_active=1
+        else
+            reap_current_child
+        fi
+        for pid in "${terminal_pids[@]}"; do
+            if process_is_active "${pid}"; then
+                owned_active=1
+                break
+            fi
+        done
+
+        if [ "${#updater_pids[@]}" -gt 0 ]; then
+            if [ "${updater_wait_logged}" -eq 0 ]; then
+                log "shutdown_wait reason=updater_active updater_pids=$(pids_to_csv "${updater_pids[@]}")"
+                updater_wait_logged=1
+            fi
+            stable_for=0
+        elif [ "${owned_active}" -eq 1 ]; then
+            stable_for=0
+        else
+            stable_for=$((stable_for + poll_seconds))
+            if [ "${stable_for}" -ge "${stable_seconds}" ]; then
+                reap_current_child
+                return 0
+            fi
+        fi
+
+        lifecycle_sleep "${poll_seconds}"
+        elapsed=$((elapsed + poll_seconds))
+    done
+
+    scan_process_candidates updater_pids terminal_pids relaunch_pids
+    log "shutdown_result=fallback_required reason=timeout terminal_pids=$(pids_to_csv "${terminal_pids[@]}") updater_pids=$(pids_to_csv "${updater_pids[@]}") child_pid=${CURRENT_CHILD_PID:-}"
+    return 1
 }
 
 record_handoff_poll_evidence() {
@@ -349,12 +491,14 @@ main() {
 
     wine "$MT5_EXE" $MT5_CMD_OPTIONS &
     local child_pid=$!
+    CURRENT_CHILD_PID="$child_pid"
     set_state "RUNNING" "child_pid=${child_pid}"
 
     set +e
     wait "$child_pid"
     local child_status=$?
     set -e
+    CURRENT_CHILD_PID=""
 
     log "child_exit code=${child_status}"
 
