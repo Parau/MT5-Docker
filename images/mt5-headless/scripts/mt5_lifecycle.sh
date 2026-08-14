@@ -1,8 +1,14 @@
 #!/bin/bash
 # MT5 terminal lifecycle wrapper: preserve LiveUpdate handoff without wineserver -k.
 #
-# Data flow: invoked by entrypoint after Wine/display bootstrap; owns terminal spawn,
-# LiveUpdate detection via /proc, and post-update relaunch monitoring only.
+# Data flow: still owned by CMD after python-bootstrap; entrypoint waits this
+# process for container liveness, then start_bridge.sh runs in background.
+# LiveUpdate handoff is supported (updater / skipupdate → RUNNING_RELAUNCHED).
+# Crash autorestart does not exist: one wine spawn, then handoff or fatal exit.
+# RUNNING is process/lifecycle liveness only, not MT5/API/RPyC readiness.
+# TERM/INT currently stop the wrapper with exit 0 and do not forward to the
+# Wine child; caller entrypoint cleanup still runs wineserver -k on EXIT.
+# Promotion to s6 longrun requires an explicit exit/shutdown policy first.
 # Limitations: no crash autorestart, no bridge/VNC/Wine bootstrap, no wineserver -k.
 set -Eeuo pipefail
 
