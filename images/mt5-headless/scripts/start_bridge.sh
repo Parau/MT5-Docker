@@ -1,5 +1,18 @@
 #!/bin/bash
 # Start RPyC bridge after MT5 terminal is reachable via MetaTrader5 Python API.
+#
+# Data flow: CMD-owned background process after metatrader longrun is up.
+# RUN_BRIDGE gate is caller-owned (entrypoint); this script never reads it.
+# Readiness probe = mt5.initialize() True AND terminal_info() connected True
+# (log text only mentions initialize). Probe uses a separate Wine Python
+# process, then final exec wine python mt5_bridge.py initializes again.
+# BRIDGE_WAIT_SECONDS is best-effort admission deadline (not hard abort):
+# timeout still starts the bridge; a slow probe may succeed after deadline
+# and still emit the timeout warning. No internal restart loop.
+# Limitations: not s6-owned; crash is nonfatal to the container; initialize()
+# may launch the terminal (MetaQuotes); future s6 promotion must define gate,
+# restart, and shutdown policy deliberately.
+# Purpose: wait for MT5 API readiness then replace this process with the bridge.
 set -Eeuo pipefail
 
 export WINEPREFIX="${WINEPREFIX:-/config/.wine}"
