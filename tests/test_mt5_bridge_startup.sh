@@ -198,19 +198,19 @@ TESTS_RUN=$((TESTS_RUN + 3))
 pass "invalid RPYC_PORT fails before initialize/server"
 rm -rf "$CASE_DIR"
 
-echo "=== test 4: initialize failure exits 0 ==="
+echo "=== test 4: initialize failure exits 1 ==="
 setup_fakes
 RPYC_PORT_SET=0
 MT5_FAKE_INIT=0
 RPYC_FAKE_MODE=ok
 run_bridge_main
-assert_eq "0" "$STATUS" "init failure exit0 (quit())"
+assert_eq "1" "$STATUS" "init failure exit1"
 echo "$OUTPUT" | grep -q "initialize() failed" || fail "failure log"
 grep -qx "initialize" "${CASE_DIR}/mt5.log" || fail "initialize called"
 grep -q "shutdown" "${CASE_DIR}/mt5.log" && fail "shutdown must not run on init failure"
 test ! -s "${CASE_DIR}/rpyc.log" || fail "server must not be constructed"
 TESTS_RUN=$((TESTS_RUN + 3))
-pass "initialize False → log + exit0 + no server/shutdown"
+pass "initialize False → log + exit1 + no server/shutdown"
 rm -rf "$CASE_DIR"
 
 echo "=== test 5: start returns → shutdown exit0 ==="
@@ -238,7 +238,7 @@ TESTS_RUN=$((TESTS_RUN + 2))
 pass "server.start raises → finally shutdown → nonzero"
 rm -rf "$CASE_DIR"
 
-echo "=== test 7: constructor raises → no finally shutdown ==="
+echo "=== test 7: constructor raises → finally shutdown ==="
 setup_fakes
 RPYC_PORT_SET=0
 MT5_FAKE_INIT=1
@@ -246,9 +246,9 @@ RPYC_FAKE_MODE=ctor_raise
 run_bridge_main
 test "$STATUS" -ne 0 || fail "ctor raise must be nonzero"
 grep -qx "initialize" "${CASE_DIR}/mt5.log" || fail "initialize before ctor"
-grep -q "shutdown" "${CASE_DIR}/mt5.log" && fail "finally must not run when ctor raises before try"
+grep -qx "shutdown" "${CASE_DIR}/mt5.log" || fail "finally shutdown must run when ctor raises"
 TESTS_RUN=$((TESTS_RUN + 2))
-pass "ThreadedServer ctor raises → nonzero, no finally shutdown"
+pass "ThreadedServer ctor raises → nonzero, finally shutdown"
 rm -rf "$CASE_DIR"
 
 echo "=== test 8: protocol_config flags ==="
@@ -298,8 +298,11 @@ fi
 if grep -E 'import[[:space:]]+signal|from[[:space:]]+signal[[:space:]]+import' "$BRIDGE_PY"; then
     fail "signal module imported"
 fi
-TESTS_RUN=$((TESTS_RUN + 2))
-pass "no explicit signal.signal / signal import"
+if grep -E 'quit\s*\(' "$BRIDGE_PY"; then
+    fail "quit() must not remain on startup failure"
+fi
+TESTS_RUN=$((TESTS_RUN + 3))
+pass "no explicit signal.signal / signal import; quit() removed"
 rm -rf "${CASE_DIR:-}"
 
 echo "=== summary ==="

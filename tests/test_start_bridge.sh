@@ -1,9 +1,9 @@
 #!/bin/bash
-# Deterministic contract tests for start_bridge.sh readiness, wait, and exec.
+# Deterministic contract tests for start_bridge.sh readiness, wait, and spawn/wait.
 #
 # Data flow: runs production start_bridge.sh with fake wine + system python3 and
 # a temporary MetaTrader5 module. Final bridge is a stub under BRIDGE_DIR.
-# Limitations: no real Wine/MT5/broker; does not cover RPyC request semantics.
+# Limitations: no real Wine/MT5/broker; signal ownership is in test_bridge_shutdown.sh.
 # Crash/nonfatal ownership for the container remains proven by smoke, not here.
 set -Eeuo pipefail
 
@@ -209,6 +209,7 @@ echo "=== test 1: defaults frozen ==="
 DEFAULTS_OUT="$(
     env -u WINEPREFIX -u WINEDEBUG -u BRIDGE_DIR -u RPYC_PORT \
         -u BRIDGE_WAIT_SECONDS -u BRIDGE_RETRY_SECONDS \
+        -u BRIDGE_SHUTDOWN_TIMEOUT_SECONDS -u BRIDGE_SHUTDOWN_POLL_SECONDS \
         bash -c '
             set -Eeuo pipefail
             export WINEPREFIX="${WINEPREFIX:-/config/.wine}"
@@ -217,12 +218,16 @@ DEFAULTS_OUT="$(
             RPYC_PORT="${RPYC_PORT:-18812}"
             BRIDGE_WAIT_SECONDS="${BRIDGE_WAIT_SECONDS:-180}"
             BRIDGE_RETRY_SECONDS="${BRIDGE_RETRY_SECONDS:-5}"
+            BRIDGE_SHUTDOWN_TIMEOUT_SECONDS="${BRIDGE_SHUTDOWN_TIMEOUT_SECONDS:-8}"
+            BRIDGE_SHUTDOWN_POLL_SECONDS="${BRIDGE_SHUTDOWN_POLL_SECONDS:-1}"
             printf "WINEPREFIX=%s\n" "$WINEPREFIX"
             printf "WINEDEBUG=%s\n" "$WINEDEBUG"
             printf "BRIDGE_DIR=%s\n" "$BRIDGE_DIR"
             printf "RPYC_PORT=%s\n" "$RPYC_PORT"
             printf "WAIT=%s\n" "$BRIDGE_WAIT_SECONDS"
             printf "RETRY=%s\n" "$BRIDGE_RETRY_SECONDS"
+            printf "SHUTDOWN_TIMEOUT=%s\n" "$BRIDGE_SHUTDOWN_TIMEOUT_SECONDS"
+            printf "SHUTDOWN_POLL=%s\n" "$BRIDGE_SHUTDOWN_POLL_SECONDS"
         '
 )"
 echo "$DEFAULTS_OUT" | grep -qx "WINEPREFIX=/config/.wine" || fail "default WINEPREFIX"
@@ -231,10 +236,13 @@ echo "$DEFAULTS_OUT" | grep -qx "BRIDGE_DIR=/opt/bridge" || fail "default BRIDGE
 echo "$DEFAULTS_OUT" | grep -qx "RPYC_PORT=18812" || fail "default RPYC_PORT"
 echo "$DEFAULTS_OUT" | grep -qx "WAIT=180" || fail "default WAIT"
 echo "$DEFAULTS_OUT" | grep -qx "RETRY=5" || fail "default RETRY"
+echo "$DEFAULTS_OUT" | grep -qx "SHUTDOWN_TIMEOUT=8" || fail "default shutdown timeout"
+echo "$DEFAULTS_OUT" | grep -qx "SHUTDOWN_POLL=1" || fail "default shutdown poll"
 grep -Fq 'WINEPREFIX="${WINEPREFIX:-/config/.wine}"' "$SCRIPT" || fail "literal WINEPREFIX default"
 grep -Fq 'BRIDGE_WAIT_SECONDS="${BRIDGE_WAIT_SECONDS:-180}"' "$SCRIPT" || fail "literal WAIT default"
 grep -Fq 'BRIDGE_RETRY_SECONDS="${BRIDGE_RETRY_SECONDS:-5}"' "$SCRIPT" || fail "literal RETRY default"
-TESTS_RUN=$((TESTS_RUN + 9))
+grep -Fq 'BRIDGE_SHUTDOWN_TIMEOUT_SECONDS="${BRIDGE_SHUTDOWN_TIMEOUT_SECONDS:-8}"' "$SCRIPT" || fail "literal shutdown timeout"
+TESTS_RUN=$((TESTS_RUN + 12))
 pass "defaults frozen"
 
 echo "=== test 2: missing bridge exit1 without wine ==="
@@ -268,7 +276,9 @@ run_bridge
 assert_eq "42" "$STATUS" "wrapper propagates final exit42"
 assert_eq "1" "$(cat "${CASE_DIR}/probe_count")" "probe once"
 assert_eq "1" "$(cat "${CASE_DIR}/bridge_count")" "final bridge once"
-echo "$OUTPUT" | grep -q "MT5 respondeu via MetaTrader5.initialize()" || fail "success log"
+echo "$OUTPUT" | grep -q "state=MT5_READY readiness=initialize+terminal_info.connected" || fail "ready log"
+echo "$OUTPUT" | grep -q "state=BRIDGE_EXIT code=42" || fail "BRIDGE_EXIT 42"
+echo "$OUTPUT" | grep -q "state=READINESS_TIMEOUT" && fail "ready path must not timeout"
 grep -qx "initialize" "${CASE_DIR}/mt5.log" || fail "initialize recorded"
 grep -qx "terminal_info" "${CASE_DIR}/mt5.log" || fail "terminal_info recorded"
 grep -qx "shutdown" "${CASE_DIR}/mt5.log" || fail "shutdown recorded"
@@ -298,8 +308,9 @@ run_bridge
 assert_eq "42" "$STATUS" "WAIT=0 still runs bridge"
 assert_eq "0" "$(cat "${CASE_DIR}/probe_count")" "zero probes when WAIT=0"
 assert_eq "1" "$(cat "${CASE_DIR}/bridge_count")" "bridge still runs"
-echo "$OUTPUT" | grep -q "AVISO: MT5 não respondeu a tempo" || fail "timeout warning"
-pass "WAIT=0 skips probes, warns, still execs bridge"
+echo "$OUTPUT" | grep -q "state=READINESS_TIMEOUT timeout_policy=best_effort action=start_bridge" || fail "timeout warning"
+echo "$OUTPUT" | grep -q "state=BRIDGE_EXIT code=42" || fail "WAIT=0 still BRIDGE_EXIT"
+pass "WAIT=0 skips probes, warns, still starts bridge"
 rm -rf "$CASE_DIR"
 
 echo "=== test 7: env propagation to final process ==="
@@ -327,7 +338,7 @@ TESTS_RUN=$((TESTS_RUN + 1))
 pass "final process cwd equals BRIDGE_DIR"
 rm -rf "$CASE_DIR"
 
-echo "=== test 9: success after deadline emits success and warning ==="
+echo "=== test 9: success after deadline does not emit timeout ==="
 setup_case
 BRIDGE_WAIT_SECONDS=1
 MT5_FAKE_MODE=ready
@@ -337,10 +348,10 @@ rm -f "${FAKE_BIN}/sleep"
 run_bridge
 assert_eq "42" "$STATUS" "success-after-deadline exit"
 assert_eq "1" "$(cat "${CASE_DIR}/probe_count")" "one slow probe"
-assert_eq "1" "$(cat "${CASE_DIR}/bridge_count")" "bridge still execs"
-echo "$OUTPUT" | grep -q "MT5 respondeu via MetaTrader5.initialize()" || fail "success log after overshoot"
-echo "$OUTPUT" | grep -q "AVISO: MT5 não respondeu a tempo" || fail "timeout warning after overshoot"
-pass "slow probe success after deadline still warns"
+assert_eq "1" "$(cat "${CASE_DIR}/bridge_count")" "bridge still starts"
+echo "$OUTPUT" | grep -q "state=MT5_READY readiness=initialize+terminal_info.connected" || fail "ready log after overshoot"
+echo "$OUTPUT" | grep -q "state=READINESS_TIMEOUT" && fail "ready overshoot must not warn timeout"
+pass "slow probe success after deadline is READY without timeout"
 rm -rf "$CASE_DIR"
 
 echo "=== test 10: no internal restart on final exit42 ==="
@@ -421,10 +432,13 @@ echo "$BODY" | grep -Eq 's6-svc|s6-rc' && fail "no s6-svc/s6-rc"
 echo "$BODY" | grep -Fq 'notification-fd' && fail "no notification-fd"
 echo "$BODY" | grep -Fq 'wineserver -k' && fail "no wineserver-k"
 echo "$BODY" | grep -Eq 'wineboot|pkill' && fail "no wineboot/pkill"
-echo "$BODY" | grep -Eq 'while[[:space:]]+true|for[[:space:]]*\(\(' && fail "unexpected restart-style loop"
-grep -Fq 'exec wine python mt5_bridge.py' "$SCRIPT" || fail "must final-exec bridge"
-TESTS_RUN=$((TESTS_RUN + 6))
-pass "static safety: no s6/restart/wineserver-k; final exec present"
+echo "$BODY" | grep -Fq 'kill -KILL' && fail "no SIGKILL"
+echo "$BODY" | grep -Eq 'kill -TERM -- -|kill -- -' && fail "no process-group kill"
+echo "$BODY" | grep -Fq 'exec wine python mt5_bridge.py' && fail "must not final-exec bridge"
+grep -Fq 'wine python mt5_bridge.py &' "$SCRIPT" || fail "must spawn server child"
+grep -Fq 'wait "${CURRENT_BRIDGE_CHILD_PID}"' "$SCRIPT" || fail "must wait owned child"
+TESTS_RUN=$((TESTS_RUN + 8))
+pass "static safety: spawn/wait, no s6/restart/SIGKILL/wineserver-k"
 
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"

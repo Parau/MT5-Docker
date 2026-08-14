@@ -18,13 +18,61 @@ VNC_LOG_FILE="${VNC_LOG_FILE:-/tmp/x11vnc.log}"
 DISPLAY_BACKEND="${DISPLAY_BACKEND:-xvnc}"
 XVNC_LOG_FILE="${XVNC_LOG_FILE:-/tmp/xvnc.log}"
 
+BRIDGE_PID=""
+BRIDGE_SHUTDOWN_TIMEOUT_SECONDS="${BRIDGE_SHUTDOWN_TIMEOUT_SECONDS:-8}"
+BRIDGE_SHUTDOWN_POLL_SECONDS="${BRIDGE_SHUTDOWN_POLL_SECONDS:-1}"
+
 cleanup() {
     echo "Finalizando processos temporários..."
     wineserver -k || true
 }
 
+cmd_pid_is_active() {
+    local pid="${1:-}"
+    case "${pid}" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    if [ "${pid}" -le 1 ] || [ "${pid}" -eq "$$" ]; then
+        return 1
+    fi
+    local status_file="/proc/${pid}/status"
+    if [ ! -r "${status_file}" ]; then
+        return 1
+    fi
+    local state
+    state="$(awk '/^State:/ { print $2; exit }' "${status_file}" 2>/dev/null || true)"
+    if [ "${state}" = "Z" ]; then
+        return 1
+    fi
+    kill -0 "${pid}" 2>/dev/null || return 1
+    return 0
+}
+
+cmd_wait_bridge_wrapper() {
+    local wrapper_pid="${1:-}"
+    local timeout_seconds=$((BRIDGE_SHUTDOWN_TIMEOUT_SECONDS + 2))
+    local poll_seconds="${BRIDGE_SHUTDOWN_POLL_SECONDS}"
+    local elapsed=0
+    while cmd_pid_is_active "${wrapper_pid}" && [ "${elapsed}" -lt "${timeout_seconds}" ]; do
+        sleep "${poll_seconds}" || true
+        elapsed=$((elapsed + poll_seconds))
+    done
+    if cmd_pid_is_active "${wrapper_pid}"; then
+        echo "CMD: bridge_shutdown_result=fallback_required wrapper_pid=${wrapper_pid}"
+        return 1
+    fi
+    echo "CMD: bridge_shutdown_result=completed wrapper_pid=${wrapper_pid}"
+    return 0
+}
+
 cmd_on_term() {
     echo "CMD: shutdown signal received."
+    local wrapper_pid="${BRIDGE_PID:-}"
+    if cmd_pid_is_active "${wrapper_pid}"; then
+        echo "CMD: targeting bridge lifecycle wrapper pid=${wrapper_pid}"
+        kill -TERM "${wrapper_pid}" 2>/dev/null || true
+        cmd_wait_bridge_wrapper "${wrapper_pid}" || true
+    fi
     exit 0
 }
 
@@ -33,6 +81,10 @@ cmd_liveness_barrier() {
         sleep 3600 || true
     done
 }
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+fi
 
 trap cmd_on_term TERM INT
 trap cleanup EXIT

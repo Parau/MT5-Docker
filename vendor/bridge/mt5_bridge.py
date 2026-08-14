@@ -287,16 +287,16 @@ if __name__ == "__main__":
 
     if not mt5.initialize():
         print("initialize() failed, error code =", mt5.last_error())
-        quit()
+        raise SystemExit(1)
 
     print(f"MT5 initialized successfully. Starting RPyC server on port {rpyc_port}...")
     print("Bridge V 0.8")
-    server = ThreadedServer(
-        MT5Service,
-        port=rpyc_port,
-        protocol_config={"allow_public_attrs": True, "allow_all_attrs": True},
-    )
     try:
+        server = ThreadedServer(
+            MT5Service,
+            port=rpyc_port,
+            protocol_config={"allow_public_attrs": True, "allow_all_attrs": True},
+        )
         server.start()
     finally:
         print("[INFO] Bridge stopping — calling mt5.shutdown()")
