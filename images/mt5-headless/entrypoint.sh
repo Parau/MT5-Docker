@@ -1,8 +1,6 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-echo "Iniciando teste Debian Bookworm + WineHQ com fluxo inspirado no gmag11 e no setup oficial da MetaTrader..."
-
 export WINEPREFIX="${WINEPREFIX:-/config/.wine}"
 export WINEARCH="${WINEARCH:-win64}"
 export DISPLAY="${DISPLAY:-:99}"
@@ -18,61 +16,13 @@ VNC_LOG_FILE="${VNC_LOG_FILE:-/tmp/x11vnc.log}"
 DISPLAY_BACKEND="${DISPLAY_BACKEND:-xvnc}"
 XVNC_LOG_FILE="${XVNC_LOG_FILE:-/tmp/xvnc.log}"
 
-BRIDGE_PID=""
-BRIDGE_SHUTDOWN_TIMEOUT_SECONDS="${BRIDGE_SHUTDOWN_TIMEOUT_SECONDS:-8}"
-BRIDGE_SHUTDOWN_POLL_SECONDS="${BRIDGE_SHUTDOWN_POLL_SECONDS:-1}"
-
 cleanup() {
     echo "Finalizando processos temporários..."
     wineserver -k || true
 }
 
-cmd_pid_is_active() {
-    local pid="${1:-}"
-    case "${pid}" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-    if [ "${pid}" -le 1 ] || [ "${pid}" -eq "$$" ]; then
-        return 1
-    fi
-    local status_file="/proc/${pid}/status"
-    if [ ! -r "${status_file}" ]; then
-        return 1
-    fi
-    local state
-    state="$(awk '/^State:/ { print $2; exit }' "${status_file}" 2>/dev/null || true)"
-    if [ "${state}" = "Z" ]; then
-        return 1
-    fi
-    kill -0 "${pid}" 2>/dev/null || return 1
-    return 0
-}
-
-cmd_wait_bridge_wrapper() {
-    local wrapper_pid="${1:-}"
-    local timeout_seconds=$((BRIDGE_SHUTDOWN_TIMEOUT_SECONDS + 2))
-    local poll_seconds="${BRIDGE_SHUTDOWN_POLL_SECONDS}"
-    local elapsed=0
-    while cmd_pid_is_active "${wrapper_pid}" && [ "${elapsed}" -lt "${timeout_seconds}" ]; do
-        sleep "${poll_seconds}" || true
-        elapsed=$((elapsed + poll_seconds))
-    done
-    if cmd_pid_is_active "${wrapper_pid}"; then
-        echo "CMD: bridge_shutdown_result=fallback_required wrapper_pid=${wrapper_pid}"
-        return 1
-    fi
-    echo "CMD: bridge_shutdown_result=completed wrapper_pid=${wrapper_pid}"
-    return 0
-}
-
 cmd_on_term() {
     echo "CMD: shutdown signal received."
-    local wrapper_pid="${BRIDGE_PID:-}"
-    if cmd_pid_is_active "${wrapper_pid}"; then
-        echo "CMD: targeting bridge lifecycle wrapper pid=${wrapper_pid}"
-        kill -TERM "${wrapper_pid}" 2>/dev/null || true
-        cmd_wait_bridge_wrapper "${wrapper_pid}" || true
-    fi
     exit 0
 }
 
@@ -85,6 +35,8 @@ cmd_liveness_barrier() {
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
     return 0
 fi
+
+echo "Iniciando teste Debian Bookworm + WineHQ com fluxo inspirado no gmag11 e no setup oficial da MetaTrader..."
 
 trap cmd_on_term TERM INT
 trap cleanup EXIT
@@ -229,16 +181,7 @@ if [ "$RUN_MT5" = "1" ]; then
     echo "Deploy MQL5 é gerenciado pelo oneshot s6 'deploy-mql5' e já foi processado antes do CMD."
     echo "Configuração NT5 é gerenciada pelo oneshot s6 'configure-nt5' e já foi processada antes do CMD."
     echo "Bootstrap Python é gerenciado pelo oneshot s6 'python-bootstrap' e já foi processado antes do CMD."
-
-    if [ "${RUN_BRIDGE:-1}" = "1" ]; then
-        echo "RUN_BRIDGE=1. Bridge RPyC será iniciada em background após MT5 responder."
-        /scripts/start_bridge.sh &
-        BRIDGE_PID=$!
-        echo "Bridge RPyC PID=$BRIDGE_PID (porta ${RPYC_PORT:-18812})"
-    else
-        echo "RUN_BRIDGE=${RUN_BRIDGE:-0}. Bridge não será iniciada."
-    fi
-
+    echo "Bridge RPyC é gerenciada pelo longrun s6 'bridge' quando habilitada pelo stage2 gate."
     echo "CMD permanece na liveness barrier transitória; o longrun s6 'metatrader' é o processo principal."
     cmd_liveness_barrier
 else

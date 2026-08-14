@@ -1,0 +1,104 @@
+#!/command/with-contenv bash
+# s6 finish: quiesce the defunct bridge process group before any restart.
+#
+# Data flow: invoked when bridge/run dies. Uses s6's $4 (defunct run PGID) to
+# SIGKILL only that group. Exit 0 allows s6-supervise restart when wanted UP;
+# exit 125 blocks restart if cleanup cannot be guaranteed. Never halts the
+# container and never touches wineserver/MT5.
+# Limitations: finish must finish under s6's ~5s default timeout; children that
+# escape into another process group are outside this safety net.
+readonly LOG_PREFIX="[BRIDGE-FINISH]"
+
+log() {
+    echo "${LOG_PREFIX} $*"
+}
+
+run_exit="${1:-}"
+signal="${2:-}"
+servicedir="${3:-}"
+pgid="${4:-}"
+
+BRIDGE_FINISH_QUIESCE_TIMEOUT_SECONDS="${BRIDGE_FINISH_QUIESCE_TIMEOUT_SECONDS:-2}"
+BRIDGE_FINISH_QUIESCE_POLL_SECONDS="${BRIDGE_FINISH_QUIESCE_POLL_SECONDS:-0.2}"
+
+caller_pgid() {
+    awk '{ print $5; exit }' /proc/self/stat 2>/dev/null || true
+}
+
+pgid_is_valid() {
+    local candidate="${1:-}"
+    case "${candidate}" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    if [ "${candidate}" -le 1 ]; then
+        return 1
+    fi
+    return 0
+}
+
+process_group_has_live_members() {
+    local candidate="$1"
+    local pid state pgrp
+    for pid in /proc/[0-9]*; do
+        pid="${pid##*/}"
+        case "${pid}" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        pgrp="$(awk '{ print $5; exit }' "/proc/${pid}/stat" 2>/dev/null || true)"
+        if [ "${pgrp}" != "${candidate}" ]; then
+            continue
+        fi
+        state="$(awk '/^State:/ { print $2; exit }' "/proc/${pid}/status" 2>/dev/null || true)"
+        if [ "${state}" = "Z" ]; then
+            continue
+        fi
+        return 0
+    done
+    return 1
+}
+
+unsafe_no_restart() {
+    local reason="$1"
+    log "run_exit=${run_exit:-none} signal=${signal:-none} servicedir=${servicedir:-none} pgid=${pgid:-none} cleanup_result=unsafe_no_restart restart_allowed=0 reason=${reason}"
+    exit 125
+}
+
+if ! pgid_is_valid "${pgid}"; then
+    unsafe_no_restart "invalid_pgid"
+fi
+
+self_pgid="$(caller_pgid)"
+case "${self_pgid}" in
+    ''|*[!0-9]*)
+        unsafe_no_restart "self_pgid_unreadable"
+        ;;
+esac
+# In containers the finish helper may itself live in PGID 1; still refuse only
+# when the cleanup target equals the finish process group.
+if [ "${pgid}" -eq "${self_pgid}" ]; then
+    unsafe_no_restart "pgid_matches_finish"
+fi
+
+# Deliberate exception to 04I-B: after graceful TERM already finished (or run
+# died), hard-kill only the old bridge session/group before restart.
+kill -KILL -- "-${pgid}" 2>/dev/null || true
+
+elapsed=0
+# Bash arithmetic truncates floats; poll with sleep and a simple counter budget.
+poll_iters=$((BRIDGE_FINISH_QUIESCE_TIMEOUT_SECONDS * 5))
+i=0
+while [ "${i}" -lt "${poll_iters}" ]; do
+    if ! process_group_has_live_members "${pgid}"; then
+        log "run_exit=${run_exit:-none} signal=${signal:-none} pgid=${pgid} cleanup_result=quiescent restart_allowed=1"
+        exit 0
+    fi
+    sleep "${BRIDGE_FINISH_QUIESCE_POLL_SECONDS}" || true
+    i=$((i + 1))
+done
+
+if process_group_has_live_members "${pgid}"; then
+    unsafe_no_restart "group_still_alive"
+fi
+
+log "run_exit=${run_exit:-none} signal=${signal:-none} pgid=${pgid} cleanup_result=quiescent restart_allowed=1"
+exit 0

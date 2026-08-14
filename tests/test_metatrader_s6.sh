@@ -211,13 +211,12 @@ fi
 TESTS_RUN=$((TESTS_RUN + 1))
 pass "entrypoint does not spawn or wait lifecycle"
 
-echo "=== test 13: bridge remains background and is not awaited ==="
-grep -Fq '/scripts/start_bridge.sh &' "$ENTRYPOINT" || fail "bridge background missing"
-if grep -Fq 'wait "$BRIDGE_PID"' "$ENTRYPOINT"; then
-    fail "entrypoint waits on bridge"
-fi
-TESTS_RUN=$((TESTS_RUN + 2))
-pass "bridge stays background and nonfatal"
+echo "=== test 13: bridge is s6-owned, not CMD-owned ==="
+grep -Fq '/scripts/start_bridge.sh &' "$ENTRYPOINT" && fail "CMD must not background bridge"
+grep -Fq 'BRIDGE_PID' "$ENTRYPOINT" && fail "CMD must not use BRIDGE_PID"
+grep -Fq "Bridge RPyC é gerenciada pelo longrun s6 'bridge'" "$ENTRYPOINT" || fail "s6 bridge message"
+TESTS_RUN=$((TESTS_RUN + 3))
+pass "bridge ownership moved off CMD"
 
 echo "=== test 14: neutral barrier exists ==="
 grep -Fq 'cmd_liveness_barrier' "$ENTRYPOINT" || fail "barrier function missing"

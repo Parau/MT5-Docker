@@ -1,9 +1,9 @@
 #!/bin/bash
-# Deterministic shutdown-ownership tests for start_bridge.sh and CMD TERM.
+# Deterministic shutdown-ownership tests for start_bridge.sh (s6 longrun-owned).
 #
-# Data flow: sources production start_bridge.sh / entrypoint helpers; fake wine
-# plus real sleep children cover probe/server TERM. Limitations: no Wine/broker;
-# CMD tests source entrypoint (source guard skips main/traps/wineserver-k).
+# Data flow: sources production start_bridge.sh; fake wine plus real sleep
+# children cover probe/server TERM and spawn-registration race. Limitations:
+# no Wine/broker; no s6-supervise (bridge finish coverage is in test_bridge_s6).
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -346,67 +346,24 @@ grep -q "state=BRIDGE_EXIT code=42" "${CASE_DIR}/wrapper.log" || fail "BRIDGE_EX
 pass "final crash remains one-shot exit42"
 rm -rf "$CASE_DIR"
 
+echo "=== test 8: CMD no longer owns bridge shutdown ==="
+grep -Fq 'BRIDGE_PID' "$ENTRYPOINT" && fail "BRIDGE_PID must be gone"
+grep -Fq 'cmd_wait_bridge_wrapper' "$ENTRYPOINT" && fail "cmd_wait_bridge_wrapper must be gone"
+grep -Fq 'targeting bridge lifecycle wrapper' "$ENTRYPOINT" && fail "CMD must not target wrapper"
+grep -Fq '/scripts/start_bridge.sh &' "$ENTRYPOINT" && fail "CMD must not spawn bridge"
 # shellcheck source=../images/mt5-headless/entrypoint.sh
 source "$ENTRYPOINT"
-
-echo "=== test 8: CMD RUN_BRIDGE=0 TERM has no unbound BRIDGE_PID ==="
-BRIDGE_PID=""
 set +e
 OUTPUT="$(cmd_on_term 2>&1)"
 STATUS=$?
 set -e
-assert_eq "0" "$STATUS" "CMD TERM without bridge"
+assert_eq "0" "$STATUS" "simple CMD TERM"
 echo "$OUTPUT" | grep -q "CMD: shutdown signal received." || fail "CMD TERM log"
-echo "$OUTPUT" | grep -q "targeting bridge lifecycle wrapper" && fail "must not target missing wrapper"
-pass "CMD TERM with empty BRIDGE_PID is safe"
-BRIDGE_PID=""
+echo "$OUTPUT" | grep -q "targeting bridge" && fail "must not target bridge"
+TESTS_RUN=$((TESTS_RUN + 4))
+pass "CMD TERM is bridge-agnostic"
 
-echo "=== test 9: CMD TERM after wrapper already exited ==="
-sleep 0.01 &
-GONE=$!
-wait "$GONE" || true
-BRIDGE_PID="$GONE"
-set +e
-OUTPUT="$(cmd_on_term 2>&1)"
-STATUS=$?
-set -e
-assert_eq "0" "$STATUS" "CMD TERM after crash"
-echo "$OUTPUT" | grep -q "targeting bridge lifecycle wrapper" && fail "must not target dead wrapper"
-pass "CMD TERM after bridge crash does not block"
-BRIDGE_PID=""
-
-echo "=== test 10: CMD TERMs wrapper only ==="
-setup_runtime
-(
-    sleep 300 &
-    child=$!
-    echo "$child" >"${CASE_DIR}/child.pid"
-    trap 'echo WRAPPER_GOT_TERM >"${CASE_DIR}/wrapper_term"; kill -TERM "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; exit 0' TERM
-    wait "$child" 2>/dev/null || true
-) &
-FAKE_WRAPPER=$!
-BRIDGE_PID="$FAKE_WRAPPER"
-BRIDGE_SHUTDOWN_TIMEOUT_SECONDS=8
-BRIDGE_SHUTDOWN_POLL_SECONDS=1
-sleep 0.2
-set +e
-OUTPUT="$(cmd_on_term 2>&1)"
-STATUS=$?
-set -e
-assert_eq "0" "$STATUS" "CMD TERM wrapper-only"
-echo "$OUTPUT" | grep -q "targeting bridge lifecycle wrapper pid=${FAKE_WRAPPER}" || fail "CMD targets wrapper: ${OUTPUT}"
-test -f "${CASE_DIR}/wrapper_term" || fail "wrapper must receive TERM"
-FAKE_CHILD="$(cat "${CASE_DIR}/child.pid")"
-if kill -0 "$FAKE_CHILD" 2>/dev/null; then
-    kill -KILL "$FAKE_CHILD" 2>/dev/null || true
-    fail "wrapper should have TERMed child; CMD must not leave it"
-fi
-grep -Fq 'wait "$BRIDGE_PID"' "$ENTRYPOINT" && fail "must not liveness-wait BRIDGE_PID"
-pass "CMD TERMs wrapper only; wrapper TERMs child"
-kill -KILL "$FAKE_WRAPPER" 2>/dev/null || true
-rm -rf "$CASE_DIR"
-
-echo "=== test 11: static no SIGKILL/pg/wineserver-k in wrapper ==="
+echo "=== test 9: static no SIGKILL/pg/wineserver-k in wrapper ==="
 BODY="$(awk 'NR==1{next} /^#/{next} {print}' "$SCRIPT")"
 echo "$BODY" | grep -Fq 'wineserver -k' && fail "wrapper wineserver-k"
 echo "$BODY" | grep -Fq 'kill -KILL' && fail "wrapper SIGKILL"
@@ -416,12 +373,80 @@ grep -Fq 'wineserver -k || true' "$ENTRYPOINT" || fail "global fallback preserve
 TESTS_RUN=$((TESTS_RUN + 5))
 pass "wrapper has no SIGKILL/pg/wineserver-k; CMD fallback remains"
 
-echo "=== test 12: BRIDGE_PID initialized empty before traps ==="
-grep -Fq 'BRIDGE_PID=""' "$ENTRYPOINT" || fail "BRIDGE_PID empty init"
-# Traps are installed only when executed as $0, after the source guard.
-grep -Fq 'trap cmd_on_term TERM INT' "$ENTRYPOINT" || fail "CMD traps remain"
-TESTS_RUN=$((TESTS_RUN + 2))
-pass "BRIDGE_PID is safe under set -u"
+echo "=== test 10: deterministic spawn→PID registration race ==="
+setup_runtime
+BRIDGE_WAIT_SECONDS=0
+BRIDGE_CHILD_MODE=stay
+cat >"${CASE_DIR}/race_hook.sh" <<EOF
+bridge_after_spawn_before_register() {
+    local pid="\$1"
+    local kind="\$2"
+    echo "\${pid}" >"${CASE_DIR}/spawned.pid"
+    echo "\${kind}" >"${CASE_DIR}/spawned.kind"
+    echo "\${SPAWN_IN_PROGRESS}" >"${CASE_DIR}/spawn_flag"
+    local i
+    for i in \$(seq 1 100); do
+        if grep -q "state=STOP_DEFERRED" "${CASE_DIR}/wrapper.log" 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.05
+    done
+}
+EOF
+# shellcheck disable=SC1090
+source "${CASE_DIR}/race_hook.sh"
+PATH="${FAKE_BIN}:${PATH}" \
+PYLIB="$PYLIB" \
+BRIDGE_DIR="$BRIDGE_DIR" \
+PROBE_COUNT="${CASE_DIR}/probe_count" \
+BRIDGE_COUNT="${CASE_DIR}/bridge_count" \
+PROBE_PID_FILE="${CASE_DIR}/probe.pid" \
+SERVER_PID_FILE="${CASE_DIR}/server.pid" \
+STAY_PROBE=0 \
+BRIDGE_CHILD_MODE=stay \
+BRIDGE_WAIT_SECONDS=0 \
+BRIDGE_SHUTDOWN_TIMEOUT_SECONDS=8 \
+WINEPREFIX=/tmp/bridge-wine \
+WINEDEBUG=-all \
+RPYC_PORT=18812 \
+stdbuf -oL -eL bash -c '
+set -Eeuo pipefail
+# shellcheck source=/dev/null
+source "'"$SCRIPT"'"
+# shellcheck source=/dev/null
+source "'"${CASE_DIR}/race_hook.sh"'"
+main
+' >"${CASE_DIR}/wrapper.log" 2>&1 &
+WRAPPER_PID=$!
+for _i in $(seq 1 100); do
+    if [ -s "${CASE_DIR}/spawned.pid" ]; then
+        break
+    fi
+    sleep 0.05
+done
+test -s "${CASE_DIR}/spawned.pid" || fail "child must be spawned before register"
+assert_eq "1" "$(cat "${CASE_DIR}/spawn_flag")" "SPAWN_IN_PROGRESS still set"
+CHILD_PID="$(cat "${CASE_DIR}/spawned.pid")"
+# Give the hook a moment to enter its STOP_DEFERRED wait loop.
+sleep 0.1
+kill -TERM "$WRAPPER_PID"
+for _i in $(seq 1 100); do
+    if grep -q "state=STOP_DEFERRED" "${CASE_DIR}/wrapper.log" 2>/dev/null; then
+        break
+    fi
+    sleep 0.05
+done
+grep -q "state=STOP_DEFERRED reason=spawn_in_progress" "${CASE_DIR}/wrapper.log" || fail "STOP_DEFERRED missing"
+wait "$WRAPPER_PID" 2>/dev/null || true
+grep -q "state=STOPPING" "${CASE_DIR}/wrapper.log" || fail "STOPPING after register missing"
+grep -q "shutdown_result=completed" "${CASE_DIR}/wrapper.log" || fail "shutdown completed missing"
+if kill -0 "$CHILD_PID" 2>/dev/null; then
+    kill -KILL "$CHILD_PID" 2>/dev/null || true
+    fail "child must not remain orphan"
+fi
+TESTS_RUN=$((TESTS_RUN + 3))
+pass "TERM during spawn defers, registers PID, TERMs child, no orphan"
+rm -rf "$CASE_DIR"
 
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"

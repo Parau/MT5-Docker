@@ -1,0 +1,20 @@
+#!/command/with-contenv bash
+# s6 longrun: exec the RPyC bridge lifecycle as a supervised process.
+#
+# Data flow: depends on metatrader for process ordering only. s6-supervise
+# owns this process via exec. RUN_BRIDGE gating is stage2-hook owned — never
+# read here. Input from container env via with-contenv.
+# Limitations: no notification-fd; s6 "up" means wrapper running, not RPyC
+# ready. No background, no internal restart, no MT5 halt.
+set -Eeuo pipefail
+
+readonly LOG_PREFIX="[BRIDGE-RUN]"
+
+log() {
+    echo "${LOG_PREFIX} $*"
+}
+
+BRIDGE_LIFECYCLE_SCRIPT="${BRIDGE_LIFECYCLE_SCRIPT:-/scripts/start_bridge.sh}"
+
+log "state=EXEC lifecycle=${BRIDGE_LIFECYCLE_SCRIPT}"
+exec "$BRIDGE_LIFECYCLE_SCRIPT"

@@ -1,17 +1,19 @@
 #!/bin/bash
 # RPyC bridge lifecycle wrapper: readiness polling then one Wine Python child.
 #
-# Data flow: CMD-owned background process after metatrader longrun is up.
-# RUN_BRIDGE gate is caller-owned (entrypoint); this script never reads it.
+# Data flow: owned by the s6 longrun `bridge` (bridge/run execs this script).
+# RUN_BRIDGE gating is stage2-hook owned; this script never reads RUN_BRIDGE.
 # Readiness probe = mt5.initialize() True AND terminal_info() connected True.
 # Probe and server are spawn+wait children tracked as CURRENT_BRIDGE_CHILD_PID.
-# CMD TERMs this wrapper; the wrapper TERMs only its current child.
-# Consumers: entrypoint.sh (BRIDGE_PID). Input: WINEPREFIX, RPYC_PORT, BRIDGE_DIR.
+# s6 TERMs this wrapper; the wrapper TERMs only its current child. bridge/finish
+# is the hard quiescence net (old PGID) before any supervised restart.
+# Consumers: s6-supervise via bridge/run. Input: WINEPREFIX, RPYC_PORT, BRIDGE_DIR.
 # Premises: timeout_policy=best_effort (deadline is admission for new probes,
-# not a hard abort). One server execution, no restart. TERM/INT always forward
-# TERM to the child; timeout yields fallback_required then wrapper exit 0.
-# Limitations: not s6-owned; crash is nonfatal to the container; initialize()
-# may launch the terminal (MetaQuotes); no SIGKILL/pkill/wineserver-k here.
+# not a hard abort). One server execution, no internal restart (s6 restarts).
+# TERM/INT always forward TERM to the child; timeout yields fallback_required
+# then wrapper exit 0. Spawn→PID registration is race-closed via SPAWN_IN_PROGRESS.
+# Limitations: initialize() may launch the terminal (MetaQuotes); no SIGKILL/
+# pkill/wineserver-k here (finish may SIGKILL the old bridge PGID only).
 set -Eeuo pipefail
 
 readonly LOG_PREFIX="[BRIDGE-LIFECYCLE]"
@@ -31,9 +33,18 @@ CURRENT_BRIDGE_CHILD_KIND=""
 MT5_READY_OBSERVED=0
 STOP_REQUESTED=0
 SHUTDOWN_IN_PROGRESS=0
+SPAWN_IN_PROGRESS=0
+PENDING_STOP_SIGNAL=""
 
 log() {
     echo "${LOG_PREFIX} $*"
+}
+
+# Test seam: invoked after child spawn + $! capture, before PID registration.
+# Production default is a no-op. Deterministic race tests may block here while
+# SPAWN_IN_PROGRESS=1 so TERM can arrive before CURRENT_BRIDGE_CHILD_PID is set.
+bridge_after_spawn_before_register() {
+    :
 }
 
 process_is_active() {
@@ -118,6 +129,12 @@ on_term() {
     if [ "${SHUTDOWN_IN_PROGRESS}" -eq 1 ]; then
         return 0
     fi
+    if [ "${SPAWN_IN_PROGRESS}" -eq 1 ]; then
+        STOP_REQUESTED=1
+        PENDING_STOP_SIGNAL="${source_signal}"
+        log "state=STOP_DEFERRED reason=spawn_in_progress"
+        return 0
+    fi
     SHUTDOWN_IN_PROGRESS=1
     trap '' INT TERM
     STOP_REQUESTED=1
@@ -125,7 +142,21 @@ on_term() {
     exit 0
 }
 
+register_bridge_child() {
+    local pid="$1"
+    local kind="$2"
+    CURRENT_BRIDGE_CHILD_PID="${pid}"
+    CURRENT_BRIDGE_CHILD_KIND="${kind}"
+    SPAWN_IN_PROGRESS=0
+    if [ -n "${PENDING_STOP_SIGNAL}" ]; then
+        local pending="${PENDING_STOP_SIGNAL}"
+        PENDING_STOP_SIGNAL=""
+        on_term "${pending}"
+    fi
+}
+
 run_readiness_probe() {
+    SPAWN_IN_PROGRESS=1
     wine python - <<'PY' >/dev/null 2>&1 &
 import MetaTrader5 as mt5
 if not mt5.initialize():
@@ -135,8 +166,9 @@ mt5.shutdown()
 if info is None or not getattr(info, "connected", False):
     raise SystemExit(1)
 PY
-    CURRENT_BRIDGE_CHILD_PID=$!
-    CURRENT_BRIDGE_CHILD_KIND="probe"
+    local probe_pid=$!
+    bridge_after_spawn_before_register "${probe_pid}" "probe"
+    register_bridge_child "${probe_pid}" "probe"
     set +e
     wait "${CURRENT_BRIDGE_CHILD_PID}"
     local probe_status=$?
@@ -148,9 +180,11 @@ PY
 start_bridge_server() {
     cd "${BRIDGE_DIR}"
     log "state=STARTING_RPYC port=${RPYC_PORT}"
+    SPAWN_IN_PROGRESS=1
     wine python mt5_bridge.py &
-    CURRENT_BRIDGE_CHILD_PID=$!
-    CURRENT_BRIDGE_CHILD_KIND="server"
+    local server_pid=$!
+    bridge_after_spawn_before_register "${server_pid}" "server"
+    register_bridge_child "${server_pid}" "server"
     log "state=RUNNING child_pid=${CURRENT_BRIDGE_CHILD_PID}"
     set +e
     wait "${CURRENT_BRIDGE_CHILD_PID}"
