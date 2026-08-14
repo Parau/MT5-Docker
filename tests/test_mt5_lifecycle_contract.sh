@@ -420,26 +420,38 @@ TESTS_RUN=$((TESTS_RUN + 2))
 pass "RUNNING is process/lifecycle state only; no MT5 readiness"
 
 echo "=== test 15: entrypoint liveness contract ==="
-grep -Fq '/scripts/mt5_lifecycle.sh &' "$ENTRYPOINT" || fail "lifecycle background"
-grep -Fq 'MT5_LIFECYCLE_PID=$!' "$ENTRYPOINT" || fail "lifecycle pid capture"
-grep -Fq 'wait "$MT5_LIFECYCLE_PID"' "$ENTRYPOINT" || fail "wait lifecycle"
+if grep -Fq '/scripts/mt5_lifecycle.sh &' "$ENTRYPOINT"; then
+    fail "entrypoint must not background mt5_lifecycle.sh"
+fi
+if grep -Fq 'MT5_LIFECYCLE_PID' "$ENTRYPOINT"; then
+    fail "entrypoint must not capture MT5_LIFECYCLE_PID"
+fi
+if grep -Fq 'wait "$MT5_LIFECYCLE_PID"' "$ENTRYPOINT"; then
+    fail "entrypoint must not wait on lifecycle"
+fi
+grep -Fq "MetaTrader lifecycle é gerenciado pelo longrun s6 'metatrader'" "$ENTRYPOINT" || fail "metatrader ownership message"
 grep -Fq '/scripts/start_bridge.sh &' "$ENTRYPOINT" || fail "bridge background"
 if grep -Fq 'wait "$BRIDGE_PID"' "$ENTRYPOINT"; then
     fail "entrypoint must not wait on BRIDGE_PID"
 fi
-grep -Fq 'exit "$MT5_LIFECYCLE_STATUS"' "$ENTRYPOINT" || fail "propagate lifecycle status"
+grep -Fq 'cmd_liveness_barrier' "$ENTRYPOINT" || fail "neutral liveness barrier"
 grep -Fq 'wineserver -k || true' "$ENTRYPOINT" || fail "cleanup wineserver -k"
 grep -Fq 'trap cleanup EXIT' "$ENTRYPOINT" || fail "trap cleanup EXIT"
-ENTRYPOINT_PATH="$ENTRYPOINT" python3 - <<'PY' || fail "entrypoint wait order"
+grep -Fq 'trap cmd_on_term TERM INT' "$ENTRYPOINT" || fail "CMD TERM/INT handler"
+if grep -Fq 'ERRO: RUN_MT5=1, mas MT5_EXE não foi encontrado' "$ENTRYPOINT"; then
+    fail "CMD must not own MT5_EXE fatal validation"
+fi
+ENTRYPOINT_PATH="$ENTRYPOINT" python3 - <<'PY' || fail "entrypoint ownership order"
 from pathlib import Path
 import os
 text = Path(os.environ["ENTRYPOINT_PATH"]).read_text()
-assert text.index("/scripts/mt5_lifecycle.sh &") < text.index("/scripts/start_bridge.sh")
-assert text.index("/scripts/start_bridge.sh") < text.index('wait "$MT5_LIFECYCLE_PID"')
+assert "/scripts/mt5_lifecycle.sh &" not in text
+assert "MT5_LIFECYCLE_PID" not in text
+assert text.index("/scripts/start_bridge.sh") < text.rindex("cmd_liveness_barrier")
 print("liveness order OK")
 PY
-TESTS_RUN=$((TESTS_RUN + 8))
-pass "CMD liveness is wait(lifecycle); bridge is not owner; cleanup is entrypoint"
+TESTS_RUN=$((TESTS_RUN + 11))
+pass "CMD barrier is transitional; metatrader is s6-owned; bridge is not liveness owner"
 
 echo "=== test 16: exit-code collision child 70 vs update_timeout ==="
 scan_process_candidates() {

@@ -23,6 +23,18 @@ cleanup() {
     wineserver -k || true
 }
 
+cmd_on_term() {
+    echo "CMD: shutdown signal received."
+    exit 0
+}
+
+cmd_liveness_barrier() {
+    while :; do
+        sleep 3600 || true
+    done
+}
+
+trap cmd_on_term TERM INT
 trap cleanup EXIT
 
 vnc_port_ready() {
@@ -160,27 +172,11 @@ RUN_MT5="${RUN_MT5:-1}"
 MT5_CMD_OPTIONS="${MT5_CMD_OPTIONS:-}"
 
 if [ "$RUN_MT5" = "1" ]; then
-    echo "RUN_MT5=1. Iniciando MetaTrader 5..."
-    echo "MT5_EXE=$MT5_EXE"
-    echo "MT5_CMD_OPTIONS=$MT5_CMD_OPTIONS"
-
-    if [ ! -f "$MT5_EXE" ]; then
-        echo "ERRO: RUN_MT5=1, mas MT5_EXE não foi encontrado:"
-        echo "$MT5_EXE"
-        echo "Execute antes com INSTALL_MT5=1 MT5_INSTALL_MODE=manual."
-        exit 1
-    fi
-
+    echo "RUN_MT5=1."
+    echo "MetaTrader lifecycle é gerenciado pelo longrun s6 'metatrader'."
     echo "Deploy MQL5 é gerenciado pelo oneshot s6 'deploy-mql5' e já foi processado antes do CMD."
     echo "Configuração NT5 é gerenciada pelo oneshot s6 'configure-nt5' e já foi processada antes do CMD."
     echo "Bootstrap Python é gerenciado pelo oneshot s6 'python-bootstrap' e já foi processado antes do CMD."
-
-    MT5_EXE="$MT5_EXE" \
-    MT5_CMD_OPTIONS="$MT5_CMD_OPTIONS" \
-    /scripts/mt5_lifecycle.sh &
-
-    MT5_LIFECYCLE_PID=$!
-    echo "MT5 lifecycle iniciado com PID=$MT5_LIFECYCLE_PID"
 
     if [ "${RUN_BRIDGE:-1}" = "1" ]; then
         echo "RUN_BRIDGE=1. Bridge RPyC será iniciada em background após MT5 responder."
@@ -191,17 +187,8 @@ if [ "$RUN_MT5" = "1" ]; then
         echo "RUN_BRIDGE=${RUN_BRIDGE:-0}. Bridge não será iniciada."
     fi
 
-    echo "Container permanecerá ativo enquanto o MT5 lifecycle estiver ativo."
-    set +e
-    wait "$MT5_LIFECYCLE_PID"
-    MT5_LIFECYCLE_STATUS=$?
-    set -e
-
-    echo "MT5 lifecycle terminou com código: $MT5_LIFECYCLE_STATUS"
-
-    if [ "$MT5_LIFECYCLE_STATUS" -ne 0 ]; then
-        exit "$MT5_LIFECYCLE_STATUS"
-    fi
+    echo "CMD permanece na liveness barrier transitória; o longrun s6 'metatrader' é o processo principal."
+    cmd_liveness_barrier
 else
     echo "RUN_MT5=$RUN_MT5. MT5 instalado/validado, mas não iniciado."
 fi

@@ -71,13 +71,15 @@ COPY vendor/bridge/ /opt/bridge/
 COPY vendor/mql5/ /vendor/mql5/
 
 RUN chmod +x /entrypoint.sh /scripts/*.sh /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s6-rc.d/window-manager/run /etc/s6-overlay/s6-rc.d/vnc-access/run \
+    && chmod +x /etc/s6-overlay/s6-rc.d/metatrader/run /etc/s6-overlay/s6-rc.d/metatrader/finish \
     && sed -i 's/\r$//' /entrypoint.sh /scripts/*.sh /scripts/configure_nt5_service.py \
     && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s6-rc.d/window-manager/run /etc/s6-overlay/s6-rc.d/vnc-access/run \
     && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/wine-bootstrap/type /etc/s6-overlay/s6-rc.d/wine-bootstrap/up \
     && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/install-mt5/type /etc/s6-overlay/s6-rc.d/install-mt5/up \
     && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/deploy-mql5/type /etc/s6-overlay/s6-rc.d/deploy-mql5/up \
     && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/configure-nt5/type /etc/s6-overlay/s6-rc.d/configure-nt5/up \
-    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/python-bootstrap/type /etc/s6-overlay/s6-rc.d/python-bootstrap/up
+    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/python-bootstrap/type /etc/s6-overlay/s6-rc.d/python-bootstrap/up \
+    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/metatrader/type /etc/s6-overlay/s6-rc.d/metatrader/run /etc/s6-overlay/s6-rc.d/metatrader/finish
 
 VOLUME /config/.wine
 
