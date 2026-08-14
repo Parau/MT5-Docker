@@ -76,7 +76,8 @@ RUN chmod +x /entrypoint.sh /scripts/*.sh /etc/s6-overlay/s6-rc.d/display/run /e
     && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/wine-bootstrap/type /etc/s6-overlay/s6-rc.d/wine-bootstrap/up \
     && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/install-mt5/type /etc/s6-overlay/s6-rc.d/install-mt5/up \
     && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/deploy-mql5/type /etc/s6-overlay/s6-rc.d/deploy-mql5/up \
-    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/configure-nt5/type /etc/s6-overlay/s6-rc.d/configure-nt5/up
+    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/configure-nt5/type /etc/s6-overlay/s6-rc.d/configure-nt5/up \
+    && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/python-bootstrap/type /etc/s6-overlay/s6-rc.d/python-bootstrap/up
 
 VOLUME /config/.wine
 

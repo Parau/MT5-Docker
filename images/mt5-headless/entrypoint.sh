@@ -173,6 +173,7 @@ if [ "$RUN_MT5" = "1" ]; then
 
     echo "Deploy MQL5 é gerenciado pelo oneshot s6 'deploy-mql5' e já foi processado antes do CMD."
     echo "Configuração NT5 é gerenciada pelo oneshot s6 'configure-nt5' e já foi processada antes do CMD."
+    echo "Bootstrap Python é gerenciado pelo oneshot s6 'python-bootstrap' e já foi processado antes do CMD."
 
     MT5_EXE="$MT5_EXE" \
     MT5_CMD_OPTIONS="$MT5_CMD_OPTIONS" \
@@ -180,10 +181,6 @@ if [ "$RUN_MT5" = "1" ]; then
 
     MT5_LIFECYCLE_PID=$!
     echo "MT5 lifecycle iniciado com PID=$MT5_LIFECYCLE_PID"
-
-    if [ "${BOOTSTRAP_PYTHON:-1}" = "1" ]; then
-        /scripts/bootstrap_python.sh || echo "AVISO: bootstrap Python falhou (continuando)."
-    fi
 
     if [ "${RUN_BRIDGE:-1}" = "1" ]; then
         echo "RUN_BRIDGE=1. Bridge RPyC será iniciada em background após MT5 responder."
