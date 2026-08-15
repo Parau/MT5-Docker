@@ -78,7 +78,20 @@ EOF
 
     cat >"${CASE_DIR}/bin/fake-perma" <<EOF
 #!/bin/bash
+# Reject non-numeric / out-of-range budget args so contaminated command
+# substitution cannot silently pass as "within budget".
 echo "perma \$*" >> "${CASE_DIR}/perma.log"
+printf '%s\n' "\$1" > "${CASE_DIR}/perma_arg1"
+printf '%s\n' "\$2" > "${CASE_DIR}/perma_arg2"
+case "\${1:-}" in
+  ''|*[!0-9]*) exit 64 ;;
+esac
+case "\${2:-}" in
+  ''|*[!0-9]*) exit 64 ;;
+esac
+if [ "\$1" -lt 1 ] || [ "\$2" -lt 2 ]; then
+  exit 64
+fi
 count=\$(cat "${CASE_DIR}/perma_count")
 echo \$((count + 1)) > "${CASE_DIR}/perma_count"
 st=\$(cat "${CASE_DIR}/perma_status")
@@ -149,7 +162,7 @@ grep -Fq 'BRIDGE_FAILURE_BUDGET_DEATHS' "${ROOT}/docker-compose.yml" || fail "co
 TESTS_RUN=$((TESTS_RUN + 8))
 pass "defaults, events exclusions, compose env"
 
-echo "=== B: invalid config falls back to defaults ==="
+echo "=== B: invalid config falls back to defaults (numeric args) ==="
 setup_case
 spawn_group
 echo true >"${CASE_DIR}/wantedup"
@@ -161,9 +174,30 @@ echo "$OUTPUT" | grep -q 'failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGE
 echo "$OUTPUT" | grep -q 'failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_DEATHS' || fail "deaths invalid log"
 echo "$OUTPUT" | grep -q 'failure_budget=within_budget' || fail "within budget after fallback"
 assert_eq "0" "$(cat "${CASE_DIR}/halt_count")" "no halt"
+assert_eq "1" "$(cat "${CASE_DIR}/perma_count")" "perma called once after fallback"
+assert_eq "60" "$(tr -d '[:space:]' <"${CASE_DIR}/perma_arg1")" "perma window arg exactly 60"
+assert_eq "5" "$(tr -d '[:space:]' <"${CASE_DIR}/perma_arg2")" "perma deaths arg exactly 5"
+# Contaminated multi-line window must never reach perma (would exit 64 → check_error).
+echo "$OUTPUT" | grep -q 'failure_budget=check_error' && fail "invalid config must not become check_error"
 cleanup_child
 rm -rf "$CASE_DIR"
-pass "invalid budget config falls back"
+pass "invalid budget config falls back with clean 60/5 args"
+
+echo "=== B2: non-numeric invalid config also falls back to 60/5 ==="
+setup_case
+spawn_group
+echo true >"${CASE_DIR}/wantedup"
+echo 0 >"${CASE_DIR}/perma_status"
+BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS=abc BRIDGE_FAILURE_BUDGET_DEATHS=abc \
+  run_finish 42 0 "$PGID"
+assert_eq "0" "$STATUS" "abc config within-budget path"
+echo "$OUTPUT" | grep -q 'failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS' || fail "abc window log"
+echo "$OUTPUT" | grep -q 'failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_DEATHS' || fail "abc deaths log"
+assert_eq "60" "$(tr -d '[:space:]' <"${CASE_DIR}/perma_arg1")" "abc window → 60"
+assert_eq "5" "$(tr -d '[:space:]' <"${CASE_DIR}/perma_arg2")" "abc deaths → 5"
+cleanup_child
+rm -rf "$CASE_DIR"
+pass "non-numeric invalid config falls back with clean 60/5 args"
 
 echo "=== C: wantedup=false skips budget ==="
 setup_case

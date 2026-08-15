@@ -119,19 +119,21 @@ process_group_has_live_members() {
 }
 
 parse_budget_window() {
+    # STDOUT must be only the numeric window — invalid-config warnings go to
+    # STDERR so command substitution cannot contaminate s6-permafailon args.
     local raw="${BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS:-}"
     local value="${BRIDGE_FAILURE_BUDGET_WINDOW_DEFAULT}"
     case "${raw}" in
         '' )
             ;;
         *[!0-9]* )
-            log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS value=${raw} default=${BRIDGE_FAILURE_BUDGET_WINDOW_DEFAULT}"
+            log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS value=${raw} default=${BRIDGE_FAILURE_BUDGET_WINDOW_DEFAULT}" >&2
             ;;
         * )
             if [ "${raw}" -ge 1 ] && [ "${raw}" -le 86400 ]; then
                 value="${raw}"
             else
-                log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS value=${raw} default=${BRIDGE_FAILURE_BUDGET_WINDOW_DEFAULT}"
+                log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS value=${raw} default=${BRIDGE_FAILURE_BUDGET_WINDOW_DEFAULT}" >&2
             fi
             ;;
     esac
@@ -139,19 +141,20 @@ parse_budget_window() {
 }
 
 parse_budget_deaths() {
+    # STDOUT must be only the numeric death count — see parse_budget_window.
     local raw="${BRIDGE_FAILURE_BUDGET_DEATHS:-}"
     local value="${BRIDGE_FAILURE_BUDGET_DEATHS_DEFAULT}"
     case "${raw}" in
         '' )
             ;;
         *[!0-9]* )
-            log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_DEATHS value=${raw} default=${BRIDGE_FAILURE_BUDGET_DEATHS_DEFAULT}"
+            log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_DEATHS value=${raw} default=${BRIDGE_FAILURE_BUDGET_DEATHS_DEFAULT}" >&2
             ;;
         * )
             if [ "${raw}" -ge 2 ] && [ "${raw}" -le 100 ]; then
                 value="${raw}"
             else
-                log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_DEATHS value=${raw} default=${BRIDGE_FAILURE_BUDGET_DEATHS_DEFAULT}"
+                log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_DEATHS value=${raw} default=${BRIDGE_FAILURE_BUDGET_DEATHS_DEFAULT}" >&2
             fi
             ;;
     esac
