@@ -191,11 +191,23 @@ kill -0 "$$" 2>/dev/null || fail "test runner must survive"
 TESTS_RUN=$((TESTS_RUN + 2))
 pass "finish does not kill caller process group"
 
-echo "=== test 12: finish never halts container ==="
+echo "=== test 12: finish may halt only via controlled BRIDGE_HALT_BIN seam ==="
 BODY="$(awk 'NR==1{next} /^#/{next} {print}' "$FINISH")"
-echo "$BODY" | grep -Eq '\bhalt\b|/run/s6/basedir/bin/halt' && fail "finish must not halt"
-TESTS_RUN=$((TESTS_RUN + 1))
-pass "finish does not halt container"
+# 04K-C: halt is allowed for BRIDGE_UNRECOVERABLE (75), only through BRIDGE_HALT_BIN.
+echo "$BODY" | grep -Fq 'BRIDGE_HALT_BIN' || fail "finish must use BRIDGE_HALT_BIN seam"
+echo "$BODY" | grep -Eq 'kill[[:space:]]+1\b|pkill|docker stop' && fail "finish must not kill PID1/pkill/docker stop"
+echo "$BODY" | grep -Fq 'halt_bridge_unrecoverable' || fail "finish must define halt_bridge_unrecoverable"
+TESTS_RUN=$((TESTS_RUN + 3))
+pass "finish uses controlled halt seam only (no PID1/pkill)"
+
+echo "=== test 12b: failure budget primitives present ==="
+echo "$BODY" | grep -Fq 's6-permafailon' || fail "finish must call s6-permafailon"
+echo "$BODY" | grep -Fq 'wantedup' || fail "finish must gate on wantedup"
+echo "$BODY" | grep -Fq 'BRIDGE_UNRECOVERABLE' || true
+grep -Fq '75' "$FINISH" || fail "exit 75 must be reserved"
+test ! -e "${SERVICE_DIR}/max-death-tally" || fail "must not add max-death-tally"
+TESTS_RUN=$((TESTS_RUN + 4))
+pass "failure budget uses s6-permafailon + wantedup; no max-death-tally"
 
 echo "=== test 13: finish no wineserver-k / pkill / MT5 kill ==="
 echo "$BODY" | grep -Fq 'wineserver' && fail "finish wineserver"

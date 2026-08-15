@@ -203,6 +203,81 @@ TESTS_RUN=$((TESTS_RUN + 2))
 pass "finish isolates bridge PGID from sibling group"
 rm -rf "$CASE_DIR"
 
+echo "=== unsafe PGID + wantedup=true → halt 75 ==="
+CASE_DIR="$(mktemp -d /tmp/bridge-finish-pgid.XXXXXX)"
+mkdir -p "${CASE_DIR}/bin"
+echo true >"${CASE_DIR}/wantedup"
+cat >"${CASE_DIR}/bin/fake-svstat" <<EOF
+#!/bin/bash
+if [ "\${1:-}" = "-o" ] && [ "\${2:-}" = "wantedup" ]; then
+  cat "${CASE_DIR}/wantedup"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "${CASE_DIR}/bin/fake-svstat"
+: >"${CASE_DIR}/halt.log"
+cat >"${CASE_DIR}/bin/fake-halt" <<EOF
+#!/bin/bash
+echo halt >> "${CASE_DIR}/halt.log"
+exit 0
+EOF
+chmod +x "${CASE_DIR}/bin/fake-halt"
+EXITCODE_FILE="${CASE_DIR}/exitcode"
+set +e
+OUTPUT="$(
+  BRIDGE_S6_SVSTAT_BIN="${CASE_DIR}/bin/fake-svstat" \
+  BRIDGE_HALT_BIN="${CASE_DIR}/bin/fake-halt" \
+  BRIDGE_CONTAINER_EXITCODE_FILE="$EXITCODE_FILE" \
+  bash "$FINISH" 42 0 "${CASE_DIR}/svc" "abc" 2>&1
+)"
+STATUS=$?
+set -e
+assert_eq "125" "$STATUS" "unsafe+up finish 125"
+assert_eq "75" "$(tr -d '[:space:]' <"$EXITCODE_FILE")" "unsafe+up exitcode 75"
+assert_eq "1" "$(grep -c halt "${CASE_DIR}/halt.log")" "unsafe+up halt once"
+echo "$OUTPUT" | grep -q 'reason=unsafe_cleanup' || fail "unsafe+up reason"
+TESTS_RUN=$((TESTS_RUN + 1))
+pass "unsafe PGID while wanted-up escalates to halt 75"
+rm -rf "$CASE_DIR"
+
+echo "=== unsafe PGID + wantedup=false → exit125 no halt75 ==="
+CASE_DIR="$(mktemp -d /tmp/bridge-finish-pgid.XXXXXX)"
+mkdir -p "${CASE_DIR}/bin"
+echo false >"${CASE_DIR}/wantedup"
+cat >"${CASE_DIR}/bin/fake-svstat" <<EOF
+#!/bin/bash
+if [ "\${1:-}" = "-o" ] && [ "\${2:-}" = "wantedup" ]; then
+  cat "${CASE_DIR}/wantedup"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "${CASE_DIR}/bin/fake-svstat"
+: >"${CASE_DIR}/halt.log"
+cat >"${CASE_DIR}/bin/fake-halt" <<EOF
+#!/bin/bash
+echo halt >> "${CASE_DIR}/halt.log"
+exit 0
+EOF
+chmod +x "${CASE_DIR}/bin/fake-halt"
+EXITCODE_FILE="${CASE_DIR}/exitcode"
+set +e
+OUTPUT="$(
+  BRIDGE_S6_SVSTAT_BIN="${CASE_DIR}/bin/fake-svstat" \
+  BRIDGE_HALT_BIN="${CASE_DIR}/bin/fake-halt" \
+  BRIDGE_CONTAINER_EXITCODE_FILE="$EXITCODE_FILE" \
+  bash "$FINISH" 42 0 "${CASE_DIR}/svc" "abc" 2>&1
+)"
+STATUS=$?
+set -e
+assert_eq "125" "$STATUS" "unsafe+down finish 125"
+assert_eq "0" "$(grep -c halt "${CASE_DIR}/halt.log" || true)" "unsafe+down no halt"
+test ! -f "$EXITCODE_FILE" || fail "unsafe+down must not write exit75"
+TESTS_RUN=$((TESTS_RUN + 1))
+pass "unsafe PGID while wanted-down does not write 75"
+rm -rf "$CASE_DIR"
+
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"
 [ "$TESTS_FAILED" -eq 0 ]

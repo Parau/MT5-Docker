@@ -6,11 +6,11 @@
 # when both longruns are up does it run a bounded Wine Python RPyC client
 # against 127.0.0.1:RPYC_PORT calling root.health() on the already-initialized
 # bridge (no MetaTrader5.initialize).
-# Policy (04K-B): Docker health ≠ s6 ready. Bridge has no notification-fd;
-# ready=false while up is expected and must not be treated as unhealthy alone.
-# Limitations: unhealthy is observability only — never restarts services;
-# mt5-only mode (RUN_BRIDGE!=1) reports metatrader-up liveness, not trade-server
-# connection.
+# Policy (04K-B/C): Docker health ≠ s6 ready and ≠ failure/recovery. Unhealthy
+# is observability only — never s6-svc/halt/restart. Bridge crash-loop budget
+# lives in bridge/finish (s6-permafailon), not here.
+# Limitations: mt5-only mode (RUN_BRIDGE!=1) reports metatrader-up liveness, not
+# trade-server connection.
 set -Eeuo pipefail
 
 readonly LOG_PREFIX="[HEALTHCHECK]"

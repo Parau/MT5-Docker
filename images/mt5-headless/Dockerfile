@@ -87,8 +87,8 @@ VOLUME /config/.wine
 
 # Docker HEALTHCHECK runs outside s6 service PATH. Prefix /command so the
 # with-contenv shebang can resolve execline helpers (ifelse, etc.). Use $PATH
-# (not $$PATH): Dockerfile shell-form expands ENV PATH at build so Wine's
-# /opt/wine-stable/bin is preserved; $$ would be a shell PID at runtime.
+# (not $$PATH): HEALTHCHECK shell-form expands PATH when the probe command is
+# executed, preserving the image ENV PATH (Wine /opt/wine-stable/bin).
 HEALTHCHECK \
     --interval=30s \
     --timeout=8s \

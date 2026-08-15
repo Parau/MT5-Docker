@@ -227,6 +227,24 @@ set -e
 assert_eq "1" "$ST" "missing path must fail under -e"
 pass "strict test -d fails on missing path"
 
+echo "=== unit 13: health body is side-effect-free (04K-C) ==="
+BODY="$(awk 'NR==1{next} /^#/{next} {print}' "$SCRIPT")"
+echo "$BODY" | grep -Eq '\bs6-svc\b' && fail "health must not call s6-svc"
+echo "$BODY" | grep -Fq '/run/s6/basedir/bin/halt' && fail "health must not halt"
+echo "$BODY" | grep -Eq '\bs6-rc\b' && fail "health must not s6-rc change"
+echo "$BODY" | grep -Eq '\bpkill\b' && fail "health must not pkill"
+echo "$BODY" | grep -Eq '\bwineboot\b' && fail "health must not wineboot"
+echo "$BODY" | grep -Eq '\bkill\b' && fail "health must not kill"
+TESTS_RUN=$((TESTS_RUN + 6))
+pass "healthcheck body has no recovery side effects"
+
+echo "=== unit 14: no recovery watchdog services ==="
+find "${ROOT}/images/mt5-headless/s6-rc.d" -maxdepth 1 -type d \
+  \( -name '*watchdog*' -o -name '*unhealthy-monitor*' \) \
+  | grep -q . && fail "unexpected watchdog/unhealthy-monitor service"
+TESTS_RUN=$((TESTS_RUN + 1))
+pass "no health/bridge recovery watchdog longruns"
+
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"
 [ "$TESTS_FAILED" -eq 0 ]

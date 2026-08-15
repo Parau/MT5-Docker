@@ -204,6 +204,61 @@ pass "halt failure does not allow restart (still 125)"
 rm -rf "$CASE_DIR"
 unset HALT_EXIT || true
 
+echo "=== test 11b: prior non-zero exitcode preserved (bridge 75 vs MT TERM 0) ==="
+CASE_DIR="$(mktemp -d /tmp/metatrader-finish.XXXXXX)"
+EXITCODE_FILE="${CASE_DIR}/exitcode"
+HALT_LOG="${CASE_DIR}/halt.log"
+cat >"${CASE_DIR}/halt.sh" <<'EOF'
+#!/bin/bash
+echo halt >>"${HALT_LOG:?}"
+exit 0
+EOF
+chmod +x "${CASE_DIR}/halt.sh"
+printf '75\n' >"$EXITCODE_FILE"
+set +e
+OUTPUT="$(
+    METATRADER_EXITCODE_FILE="$EXITCODE_FILE" \
+    METATRADER_HALT_BIN="${CASE_DIR}/halt.sh" \
+    HALT_LOG="$HALT_LOG" \
+    bash "$FINISH" 0 2>&1
+)"
+STATUS=$?
+set -e
+assert_eq "125" "$STATUS" "preserve path still finish 125"
+assert_eq "75" "$(tr -d '[:space:]' <"$EXITCODE_FILE")" "prior 75 not wiped by exit0"
+echo "$OUTPUT" | grep -q "fatal_exit_preserved=75" || fail "preserve log"
+echo "$OUTPUT" | grep -q "container_exit=75" || fail "logged container_exit 75"
+TESTS_RUN=$((TESTS_RUN + 1))
+pass "prior non-zero exitcode preserved across metatrader finish"
+rm -rf "$CASE_DIR"
+
+echo "=== test 11c: prior 0 does not block metatrader lifecycle exit ==="
+CASE_DIR="$(mktemp -d /tmp/metatrader-finish.XXXXXX)"
+EXITCODE_FILE="${CASE_DIR}/exitcode"
+HALT_LOG="${CASE_DIR}/halt.log"
+cat >"${CASE_DIR}/halt.sh" <<'EOF'
+#!/bin/bash
+echo halt >>"${HALT_LOG:?}"
+exit 0
+EOF
+chmod +x "${CASE_DIR}/halt.sh"
+printf '0\n' >"$EXITCODE_FILE"
+set +e
+OUTPUT="$(
+    METATRADER_EXITCODE_FILE="$EXITCODE_FILE" \
+    METATRADER_HALT_BIN="${CASE_DIR}/halt.sh" \
+    HALT_LOG="$HALT_LOG" \
+    bash "$FINISH" 42 2>&1
+)"
+STATUS=$?
+set -e
+assert_eq "125" "$STATUS" "zero prior finish 125"
+assert_eq "42" "$(tr -d '[:space:]' <"$EXITCODE_FILE")" "zero prior overwritten with 42"
+echo "$OUTPUT" | grep -q "fatal_exit_preserved" && fail "must not preserve 0"
+TESTS_RUN=$((TESTS_RUN + 1))
+pass "exitcode 0 does not block metatrader fatal"
+rm -rf "$CASE_DIR"
+
 echo "=== test 12: no transitional CMD owns lifecycle ==="
 test ! -e "${ROOT}/images/mt5-headless/entrypoint.sh" || fail "entrypoint.sh must be deleted"
 grep -Fq 'entrypoint.sh' "$DOCKERFILE" && fail "Dockerfile must not copy entrypoint"
