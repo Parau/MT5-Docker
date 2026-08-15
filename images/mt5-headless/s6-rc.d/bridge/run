@@ -4,6 +4,9 @@
 # Data flow: depends on metatrader for process ordering only. s6-supervise
 # owns this process via exec. RUN_BRIDGE gating is stage2-hook owned — never
 # read here. Input from container env via with-contenv.
+# Policy (04K-B): no notification-fd / s6-notifyoncheck / mt5-ready. s6 "up"
+# = process-up only; s6 "ready" is intentionally unsupported. Continuous
+# operational health is Docker HEALTHCHECK (RPyC health), not stage2 gating.
 # Limitations: no notification-fd; s6 "up" means wrapper running, not RPyC
 # ready. No background, no internal restart, no MT5 halt.
 set -Eeuo pipefail

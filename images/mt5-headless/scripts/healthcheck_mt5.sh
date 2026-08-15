@@ -1,12 +1,15 @@
 #!/command/with-contenv bash
-# Docker HEALTHCHECK: operational health via s6 up-gates and RPyC health().
+# Docker HEALTHCHECK: continuous operational health (not s6 startup readiness).
 #
 # Data flow: Docker invokes this on an interval. First checks RUN_MT5 and
-# s6-svstat for metatrader/bridge. Only when both longruns are up does it run a
-# bounded Wine Python RPyC client against 127.0.0.1:RPYC_PORT calling
-# root.health() on the already-initialized bridge (no MetaTrader5.initialize).
+# s6-svstat -u (process-up only — never s6 ready) for metatrader/bridge. Only
+# when both longruns are up does it run a bounded Wine Python RPyC client
+# against 127.0.0.1:RPYC_PORT calling root.health() on the already-initialized
+# bridge (no MetaTrader5.initialize).
+# Policy (04K-B): Docker health ≠ s6 ready. Bridge has no notification-fd;
+# ready=false while up is expected and must not be treated as unhealthy alone.
 # Limitations: unhealthy is observability only — never restarts services;
-# mt5-only mode (RUN_BRIDGE!=1) reports metatrader-up liveness, not trade-serve
+# mt5-only mode (RUN_BRIDGE!=1) reports metatrader-up liveness, not trade-server
 # connection.
 set -Eeuo pipefail
 

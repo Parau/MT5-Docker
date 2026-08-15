@@ -85,13 +85,15 @@ RUN chmod +x /scripts/*.sh /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s
 
 VOLUME /config/.wine
 
-# Docker HEALTHCHECK invokes the script outside s6 run PATH. Prefix /command so
-# the with-contenv shebang can resolve execline helpers (ifelse, etc.).
+# Docker HEALTHCHECK runs outside s6 service PATH. Prefix /command so the
+# with-contenv shebang can resolve execline helpers (ifelse, etc.). Use $PATH
+# (not $$PATH): Dockerfile shell-form expands ENV PATH at build so Wine's
+# /opt/wine-stable/bin is preserved; $$ would be a shell PID at runtime.
 HEALTHCHECK \
     --interval=30s \
     --timeout=8s \
     --start-period=420s \
     --retries=3 \
-    CMD PATH=/command:$$PATH /scripts/healthcheck_mt5.sh
+    CMD PATH=/command:$PATH /scripts/healthcheck_mt5.sh
 
 ENTRYPOINT ["/init"]

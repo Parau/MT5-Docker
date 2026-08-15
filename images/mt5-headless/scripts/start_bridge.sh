@@ -1,9 +1,10 @@
 #!/bin/bash
-# RPyC bridge lifecycle wrapper: readiness polling then one Wine Python child.
+# RPyC bridge lifecycle wrapper: connectivity preflight then one Wine Python child.
 #
 # Data flow: owned by the s6 longrun `bridge` (bridge/run execs this script).
 # RUN_BRIDGE gating is stage2-hook owned; this script never reads RUN_BRIDGE.
-# Readiness probe = mt5.initialize() True AND terminal_info() connected True.
+# Connectivity preflight (NOT s6 readiness) = mt5.initialize() True AND
+# terminal_info() connected True, then best-effort timeout, then server launch.
 # Probe and server are spawn+wait children tracked as CURRENT_BRIDGE_CHILD_PID.
 # s6 TERMs this wrapper; the wrapper TERMs only its current child. bridge/finish
 # is the hard quiescence net (old PGID) before any supervised restart.
@@ -12,6 +13,9 @@
 # not a hard abort). One server execution, no internal restart (s6 restarts).
 # TERM/INT always forward TERM to the child; timeout yields fallback_required
 # then wrapper exit 0. Spawn→PID registration is race-closed via SPAWN_IN_PROGRESS.
+# Policy (04K-B): this preflight is wrapper-local only — it is not notification-fd,
+# not mt5-ready, and must not block s6-rc stage2. Operational health after start
+# remains Docker HEALTHCHECK via RPyC.
 # Limitations: initialize() may launch the terminal (MetaQuotes); no SIGKILL/
 # pkill/wineserver-k here (finish may SIGKILL the old bridge PGID only).
 set -Eeuo pipefail

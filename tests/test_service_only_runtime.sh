@@ -170,7 +170,10 @@ HC="$(docker image inspect "$IMAGE" --format '{{json .Config.Healthcheck}}')"
 echo "Healthcheck=${HC}"
 echo "$HC" | grep -Fq '/scripts/healthcheck_mt5.sh' || fail "HEALTHCHECK missing script"
 echo "$HC" | grep -Fq 'PATH=/command' || fail "HEALTHCHECK must prefix /command for with-contenv"
-TESTS_RUN=$((TESTS_RUN + 5))
+echo "$HC" | grep -Fq '$$PATH' && fail "HEALTHCHECK must not contain \$\$PATH"
+echo "$HC" | grep -E 'PATH=/command:(\$PATH|/opt/wine-stable/bin)' >/dev/null \
+  || fail "HEALTHCHECK must keep \$PATH or baked Wine path"
+TESTS_RUN=$((TESTS_RUN + 6))
 pass "image Entrypoint=/init, Cmd empty, no entrypoint, no wine finalizer, HEALTHCHECK PATH"
 
 echo "=== B: SERVICE-ONLY UP (RUN_BRIDGE=0) ==="

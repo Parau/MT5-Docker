@@ -505,18 +505,72 @@ kill -KILL "$RELAUNCH_PID" 2>/dev/null || true
 TESTS_RUN=$((TESTS_RUN + 1))
 pass "real scanner TERMs skipupdate relaunch terminal"
 
-echo "=== test 16: updater then relaunch (real processes) ==="
-bash -c 'exec -a "C:\\liveupdate\\terminal64.exe /update /portable" sleep 1' &
-UPDATER_PID=$!
+echo "=== test 16: updater then relaunch (real processes, synchronized) ==="
+# Stabilized 04K-B: explicit markers replace the sleep-1 race. Production
+# lifecycle is untouched; only the test-only lifecycle_sleep seam is overridden.
+MARKER_DIR="$(mktemp -d /tmp/mt5-upd-relaunch.XXXXXX)"
+UPDATER_PID=""
+RELAUNCH_PID=""
+ORCH_PID=""
+cleanup_test16() {
+    if [ -n "${RELAUNCH_PID}" ]; then
+        kill -TERM "$RELAUNCH_PID" 2>/dev/null || true
+        kill -KILL "$RELAUNCH_PID" 2>/dev/null || true
+    fi
+    if [ -n "${UPDATER_PID}" ]; then
+        kill -TERM "$UPDATER_PID" 2>/dev/null || true
+        kill -KILL "$UPDATER_PID" 2>/dev/null || true
+    fi
+    if [ -n "${ORCH_PID}" ]; then
+        kill -TERM "$ORCH_PID" 2>/dev/null || true
+        kill -KILL "$ORCH_PID" 2>/dev/null || true
+    fi
+    rm -rf "$MARKER_DIR"
+}
+trap cleanup_test16 EXIT
+
+# Updater stays alive until release_updater, then exits naturally (not TERMed).
+exec -a "C:\\liveupdate\\terminal64.exe /update /portable" \
+    bash -c "
+set -Eeuo pipefail
+echo \$\$ > '${MARKER_DIR}/updater.pid'
+touch '${MARKER_DIR}/updater_ready'
+while [ ! -f '${MARKER_DIR}/release_updater' ]; do
+  sleep 0.05
+done
+exit 0
+" &
+# Note: $! is the bash child; cmdline classification uses the exec -a name.
+sleep 0.05
+for _ in $(seq 1 100); do
+    if [ -f "${MARKER_DIR}/updater.pid" ] && [ -f "${MARKER_DIR}/updater_ready" ]; then
+        break
+    fi
+    sleep 0.05
+done
+test -f "${MARKER_DIR}/updater.pid" || fail "updater_ready timeout"
+UPDATER_PID="$(cat "${MARKER_DIR}/updater.pid")"
+kill -0 "$UPDATER_PID" || fail "updater not running"
+
+# Orchestrator: after release, wait updater gone, spawn relaunch, publish ready.
 (
-    while kill -0 "$UPDATER_PID" 2>/dev/null; do
-        sleep 0.1
+    set -Eeuo pipefail
+    while [ ! -f "${MARKER_DIR}/release_updater" ]; do
+        sleep 0.05
     done
-    exec -a "C:\\Program Files\\MetaTrader 5\\terminal64.exe /skipupdate:E37BD44435252CF0D1BD0D6944C9EFA5 /portable" sleep 30
+    while kill -0 "$UPDATER_PID" 2>/dev/null; do
+        sleep 0.05
+    done
+    exec -a "C:\\Program Files\\MetaTrader 5\\terminal64.exe /skipupdate:E37BD44435252CF0D1BD0D6944C9EFA5 /portable" sleep 30 &
+    echo $! >"${MARKER_DIR}/relaunch.pid"
+    touch "${MARKER_DIR}/relaunch_ready"
+    wait || true
 ) &
-RELAUNCH_WATCH=$!
+ORCH_PID=$!
+
 set +e
 OUTPUT="$(
+    MARKER_DIR="$MARKER_DIR" \
     MT5_SHUTDOWN_TIMEOUT_SECONDS=8 \
     MT5_SHUTDOWN_STABLE_SECONDS=1 \
     MT5_POLL_SECONDS=1 \
@@ -524,28 +578,45 @@ OUTPUT="$(
         set -Eeuo pipefail
         source "$1"
         CURRENT_CHILD_PID=""
+        RELEASED=0
+        lifecycle_sleep() {
+            local seconds="${1:-1}"
+            if [ "$RELEASED" -eq 0 ]; then
+                RELEASED=1
+                touch "${MARKER_DIR}/release_updater"
+                local i=0
+                while [ ! -f "${MARKER_DIR}/relaunch_ready" ]; do
+                    if [ "$i" -ge 100 ]; then
+                        echo "FAIL: relaunch_ready timeout" >&2
+                        return 1
+                    fi
+                    sleep 0.05
+                    i=$((i + 1))
+                done
+            fi
+            sleep "$seconds"
+        }
         shutdown_mt5_processes TERM
     ' bash "$SCRIPT"
 )"
 STATUS=$?
 set -e
-if [ "$STATUS" -eq 0 ]; then
-    echo "$OUTPUT" | grep -q "shutdown_wait reason=updater_active" || fail "race wait updater"
-    echo "$OUTPUT" | grep -q "shutdown_signal signal=TERM" || fail "race must TERM relaunch"
-    echo "$OUTPUT" | grep -q "target_pids=${UPDATER_PID}" && fail "race must not TERM updater"
-    TESTS_RUN=$((TESTS_RUN + 3))
-    pass "real updater→relaunch: updater untouched, relaunch TERMed, completed"
-else
-    echo "NOTE: real updater→relaunch smoke was environmental (status=${STATUS})"
-    echo "$OUTPUT"
-    echo "Deterministic snapshot test 6 remains the source of truth."
-    TESTS_RUN=$((TESTS_RUN + 1))
-    pass "real updater→relaunch smoke limited; deterministic test 6 covers the race"
+
+test -f "${MARKER_DIR}/relaunch.pid" || fail "relaunch pid missing"
+RELAUNCH_PID="$(cat "${MARKER_DIR}/relaunch.pid")"
+
+assert_eq "0" "$STATUS" "synchronized updater→relaunch status"
+echo "$OUTPUT" | grep -q "shutdown_wait reason=updater_active" || fail "must wait while updater active"
+echo "$OUTPUT" | grep -q "shutdown_signal signal=TERM" || fail "must TERM relaunch"
+echo "$OUTPUT" | grep -q "target_pids=${RELAUNCH_PID}" || fail "must TERM relaunch pid"
+if echo "$OUTPUT" | grep -E 'target_pids=' | grep -Eq "(^|[^0-9])${UPDATER_PID}([^0-9]|$)"; then
+    fail "updater PID appeared in target_pids"
 fi
-kill -TERM "$RELAUNCH_WATCH" 2>/dev/null || true
-kill -KILL "$RELAUNCH_WATCH" 2>/dev/null || true
-kill -TERM "$UPDATER_PID" 2>/dev/null || true
-kill -KILL "$UPDATER_PID" 2>/dev/null || true
+TESTS_RUN=$((TESTS_RUN + 4))
+pass "real updater→relaunch: synchronized; updater untouched; relaunch TERMed"
+
+trap - EXIT
+cleanup_test16
 
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"
