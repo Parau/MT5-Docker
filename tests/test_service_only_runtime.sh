@@ -158,13 +158,20 @@ if [ "$CMD" != "null" ] && [ "$CMD" != "[]" ] && [ -n "$CMD" ] && [ "$CMD" != "<
     fail "Cmd must be absent/null/empty, got ${CMD}"
 fi
 docker run --rm --entrypoint bash "$IMAGE" -lc '
-  test ! -e /entrypoint.sh
-  test ! -e /etc/cont-finish.d/10-wine-cleanup
-  test -d /etc/s6-overlay/s6-rc.d/metatrade
-  test -d /etc/s6-overlay/s6-rc.d/bridge
+set -Eeuo pipefail
+test ! -e /entrypoint.sh
+test ! -e /etc/cont-finish.d/10-wine-cleanup
+test -d /etc/s6-overlay/s6-rc.d/metatrader
+test -d /etc/s6-overlay/s6-rc.d/bridge
+test -x /scripts/healthcheck_mt5.sh
+head -1 /scripts/healthcheck_mt5.sh | grep -Fq with-contenv
 '
-TESTS_RUN=$((TESTS_RUN + 3))
-pass "image Entrypoint=/init, Cmd empty, no entrypoint, no wine finalizer"
+HC="$(docker image inspect "$IMAGE" --format '{{json .Config.Healthcheck}}')"
+echo "Healthcheck=${HC}"
+echo "$HC" | grep -Fq '/scripts/healthcheck_mt5.sh' || fail "HEALTHCHECK missing script"
+echo "$HC" | grep -Fq 'PATH=/command' || fail "HEALTHCHECK must prefix /command for with-contenv"
+TESTS_RUN=$((TESTS_RUN + 5))
+pass "image Entrypoint=/init, Cmd empty, no entrypoint, no wine finalizer, HEALTHCHECK PATH"
 
 echo "=== B: SERVICE-ONLY UP (RUN_BRIDGE=0) ==="
 run_temp "${NAME_PREFIX}_up" \

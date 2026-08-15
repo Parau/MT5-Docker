@@ -86,6 +86,15 @@ class MT5Service(rpyc.Service):
         except Exception:
             return False
 
+    def exposed_health(self) -> bool:
+        """Operational health for Docker HEALTHCHECK via RPyC.
+
+        True only when terminal_info is present and connected to the trade
+        server. Does not call initialize/login/shutdown; uses the bridge's
+        existing MetaTrader5 connection only.
+        """
+        return self._is_mt5_ready()
+
     def _call_history(
         self,
         fn_name: str,

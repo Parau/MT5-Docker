@@ -187,7 +187,7 @@ rm -rf "$CASE_DIR"
 echo "=== test 3: invalid RPYC_PORT ==="
 setup_fakes
 RPYC_PORT_SET=1
-RPYC_PORT=not-a-number
+RPYC_PORT=not-a-numbe
 MT5_FAKE_INIT=1
 RPYC_FAKE_MODE=ok
 run_bridge_main
@@ -289,7 +289,166 @@ TESTS_RUN=$((TESTS_RUN + 2))
 pass "exposed_shutdown returns True without mt5.shutdown"
 rm -rf "$CASE_DIR"
 
-echo "=== test 10: no explicit signal handler ==="
+echo "=== test 10: exposed_health connected True ==="
+setup_fakes
+cat >"${CASE_DIR}/MetaTrader5.py" <<'EOF'
+import os
+from types import SimpleNamespace
+
+_LOG = os.environ.get("MT5_FAKE_LOG", "")
+
+
+def _record(event: str) -> None:
+    if _LOG:
+        with open(_LOG, "a", encoding="utf-8") as fh:
+            fh.write(event + "\n")
+
+
+def initialize(*args, **kwargs) -> bool:
+    _record("initialize")
+    return True
+
+
+def shutdown() -> None:
+    _record("shutdown")
+
+
+def terminal_info():
+    _record("terminal_info")
+    return SimpleNamespace(connected=True)
+EOF
+OUTPUT="$(
+    PYTHONPATH="${CASE_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
+    MT5_FAKE_LOG="${CASE_DIR}/mt5.log" \
+    python3 - <<PY
+import importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("mt5_bridge", Path(r"${BRIDGE_PY}"))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(repr(mod.MT5Service().exposed_health()))
+PY
+)"
+assert_eq "True" "$OUTPUT" "health connected True"
+pass "exposed_health True when connected"
+
+echo "=== test 11: exposed_health connected False ==="
+setup_fakes
+cat >"${CASE_DIR}/MetaTrader5.py" <<'EOF'
+from types import SimpleNamespace
+
+def initialize(*args, **kwargs):
+    return True
+
+def shutdown():
+    pass
+
+def terminal_info():
+    return SimpleNamespace(connected=False)
+EOF
+OUTPUT="$(
+    PYTHONPATH="${CASE_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
+    python3 - <<PY
+import importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("mt5_bridge", Path(r"${BRIDGE_PY}"))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(repr(mod.MT5Service().exposed_health()))
+PY
+)"
+assert_eq "False" "$OUTPUT" "health connected False"
+pass "exposed_health False when disconnected"
+
+echo "=== test 12: exposed_health terminal_info None ==="
+setup_fakes
+# default fake already returns None
+OUTPUT="$(
+    PYTHONPATH="${CASE_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
+    python3 - <<PY
+import importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("mt5_bridge", Path(r"${BRIDGE_PY}"))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(repr(mod.MT5Service().exposed_health()))
+PY
+)"
+assert_eq "False" "$OUTPUT" "health None"
+pass "exposed_health False when terminal_info None"
+
+echo "=== test 13: exposed_health exception → False ==="
+setup_fakes
+cat >"${CASE_DIR}/MetaTrader5.py" <<'EOF'
+def initialize(*args, **kwargs):
+    return True
+
+def shutdown():
+    pass
+
+def terminal_info():
+    raise RuntimeError("boom")
+EOF
+set +e
+OUTPUT="$(
+    PYTHONPATH="${CASE_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
+    python3 - <<PY
+import importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("mt5_bridge", Path(r"${BRIDGE_PY}"))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(repr(mod.MT5Service().exposed_health()))
+PY
+)"
+STATUS=$?
+set -e
+assert_eq "0" "$STATUS" "health must not raise"
+assert_eq "False" "$OUTPUT" "health exception False"
+pass "exposed_health swallows exceptions"
+
+echo "=== test 14: exposed_health does not call initialize ==="
+setup_fakes
+cat >"${CASE_DIR}/MetaTrader5.py" <<'EOF'
+import os
+from types import SimpleNamespace
+
+_LOG = os.environ.get("MT5_FAKE_LOG", "")
+
+def _record(event: str) -> None:
+    if _LOG:
+        with open(_LOG, "a", encoding="utf-8") as fh:
+            fh.write(event + "\n")
+
+def initialize(*args, **kwargs) -> bool:
+    _record("initialize")
+    return True
+
+def shutdown() -> None:
+    _record("shutdown")
+
+def terminal_info():
+    _record("terminal_info")
+    return SimpleNamespace(connected=True)
+EOF
+: >"${CASE_DIR}/mt5.log"
+PYTHONPATH="${CASE_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
+MT5_FAKE_LOG="${CASE_DIR}/mt5.log" \
+python3 - <<PY
+import importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("mt5_bridge", Path(r"${BRIDGE_PY}"))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+assert mod.MT5Service().exposed_health() is True
+PY
+grep -q "initialize" "${CASE_DIR}/mt5.log" && fail "health must not call initialize"
+grep -qx "terminal_info" "${CASE_DIR}/mt5.log" || fail "health must call terminal_info"
+TESTS_RUN=$((TESTS_RUN + 2))
+pass "exposed_health does not call initialize"
+rm -rf "$CASE_DIR"
+
+echo "=== test 15: no explicit signal handler ==="
 grep -En 'signal\.signal|SIGTERM|SIGINT' "$BRIDGE_PY" && fail "unexpected signal handler references" || true
 # Allow comments mentioning shutdown but forbid signal.signal installs.
 if grep -E 'signal\.signal\s*\(' "$BRIDGE_PY"; then

@@ -85,4 +85,13 @@ RUN chmod +x /scripts/*.sh /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s
 
 VOLUME /config/.wine
 
+# Docker HEALTHCHECK invokes the script outside s6 run PATH. Prefix /command so
+# the with-contenv shebang can resolve execline helpers (ifelse, etc.).
+HEALTHCHECK \
+    --interval=30s \
+    --timeout=8s \
+    --start-period=420s \
+    --retries=3 \
+    CMD PATH=/command:$$PATH /scripts/healthcheck_mt5.sh
+
 ENTRYPOINT ["/init"]

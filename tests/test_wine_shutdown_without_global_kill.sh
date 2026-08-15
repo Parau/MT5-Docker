@@ -217,11 +217,12 @@ if [ "$CMD" != "null" ] && [ "$CMD" != "[]" ] && [ -n "$CMD" ]; then
     fail "Cmd must be null/empty got ${CMD}"
 fi
 docker run --rm --entrypoint bash "$IMAGE" -lc '
-  test ! -e /entrypoint.sh
-  test ! -e /etc/cont-finish.d/10-wine-cleanup
-  find /etc/cont-finish.d -maxdepth 1 -type f -print 2>/dev/null | grep -q . && exit 2 || true
-  test -d /etc/s6-overlay/s6-rc.d/metatrade
-  test -d /etc/s6-overlay/s6-rc.d/bridge
+set -Eeuo pipefail
+test ! -e /entrypoint.sh
+test ! -e /etc/cont-finish.d/10-wine-cleanup
+find /etc/cont-finish.d -maxdepth 1 -type f -print 2>/dev/null | grep -q . && exit 2 || true
+test -d /etc/s6-overlay/s6-rc.d/metatrader
+test -d /etc/s6-overlay/s6-rc.d/bridge
 '
 TESTS_RUN=$((TESTS_RUN + 3))
 pass "image: /init, no CMD, no entrypoint, no wine finalizer"
