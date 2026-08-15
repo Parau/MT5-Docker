@@ -10,7 +10,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN="${ROOT}/images/mt5-headless/s6-rc.d/metatrader/run"
 FINISH="${ROOT}/images/mt5-headless/s6-rc.d/metatrader/finish"
 DOCKERFILE="${ROOT}/images/mt5-headless/Dockerfile"
-FINALIZER="${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup"
 TYPE_FILE="${ROOT}/images/mt5-headless/s6-rc.d/metatrader/type"
 DEP_FILE="${ROOT}/images/mt5-headless/s6-rc.d/metatrader/dependencies.d/python-bootstrap"
 BUNDLE_FILE="${ROOT}/images/mt5-headless/user-bundles.d/user/contents.d/metatrader"
@@ -219,20 +218,19 @@ grep -Fq 'BRIDGE_PID' "$DOCKERFILE" && fail "Dockerfile must not mention BRIDGE_
 TESTS_RUN=$((TESTS_RUN + 3))
 pass "bridge ownership is s6 longrun"
 
-echo "=== test 14: no CMD liveness barrier; stage3 finalizer present ==="
+echo "=== test 14: no CMD liveness barrier; no Wine finalizer ==="
 test ! -e "${ROOT}/images/mt5-headless/entrypoint.sh" || fail "entrypoint absent"
 grep -RFq 'cmd_liveness_barrier' "${ROOT}/images/mt5-headless" && fail "cmd_liveness_barrier residue"
-test -f "$FINALIZER" || fail "finalizer missing"
-grep -Fq 'wineserver -k' "$FINALIZER" || fail "finalizer wineserver-k"
+test ! -e "${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup" || fail "finalizer must be absent"
+grep -Fq 'cont-finish.d' "$DOCKERFILE" && fail "Dockerfile must not copy cont-finish.d"
 TESTS_RUN=$((TESTS_RUN + 4))
-pass "service-only liveness; wineserver-k in stage3 finalizer"
+pass "service-only liveness; no project wineserver -k finalizer"
 
 echo "=== test 15: no readiness / notification-fd ==="
 BODY="$(awk 'NR==1{next} /^#/{next} {print}' "$RUN"; awk 'NR==1{next} /^#/{next} {print}' "$FINISH")"
 echo "$BODY" | grep -Eq 'notification-fd|s6-notify|MetaTrader5\.initialize|terminal_info' && fail "readiness in run/finish"
-grep -Fq 'notification-fd' "$FINALIZER" && fail "notification-fd in finalizer"
-TESTS_RUN=$((TESTS_RUN + 2))
-pass "no readiness/notification-fd in metatrader run/finish/finalizer"
+TESTS_RUN=$((TESTS_RUN + 1))
+pass "no readiness/notification-fd in metatrader run/finish"
 
 echo "=== test 16: production defaults ==="
 grep -Fq 'MT5_LIFECYCLE_SCRIPT:-/scripts/mt5_lifecycle.sh' "$RUN" || fail "lifecycle default"

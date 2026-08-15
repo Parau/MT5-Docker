@@ -8,7 +8,6 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${ROOT}/images/mt5-headless/scripts/start_bridge.sh"
-FINALIZER="${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup"
 DOCKERFILE="${ROOT}/images/mt5-headless/Dockerfile"
 
 TESTS_RUN=0
@@ -361,9 +360,9 @@ echo "$BODY" | grep -Fq 'wineserver -k' && fail "wrapper wineserver-k"
 echo "$BODY" | grep -Fq 'kill -KILL' && fail "wrapper SIGKILL"
 echo "$BODY" | grep -Eq 'pkill|wineboot' && fail "wrapper pkill/wineboot"
 echo "$BODY" | grep -Eq 'kill -TERM -- -|kill -- -' && fail "wrapper process-group"
-grep -Fq 'wineserver -k' "$FINALIZER" || fail "global fallback must live in finalizer"
+test ! -e "${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup" || fail "no project Wine finalizer"
 TESTS_RUN=$((TESTS_RUN + 5))
-pass "wrapper has no SIGKILL/pg/wineserver-k; stage3 finalizer owns fallback"
+pass "wrapper has no SIGKILL/pg/wineserver-k; no project global Wine kill"
 
 echo "=== test 10: deterministic spawn→PID registration race ==="
 setup_runtime

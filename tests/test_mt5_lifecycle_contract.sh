@@ -10,7 +10,6 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${ROOT}/images/mt5-headless/scripts/mt5_lifecycle.sh"
 DOCKERFILE="${ROOT}/images/mt5-headless/Dockerfile"
-FINALIZER="${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -420,18 +419,18 @@ grep -n 'set_state "RUNNING" "child_pid=' "$SCRIPT" | grep -q 'child_pid=${child
 TESTS_RUN=$((TESTS_RUN + 2))
 pass "RUNNING is process/lifecycle state only; no MT5 readiness"
 
-echo "=== test 15: service-only runtime contract (no CMD barrier) ==="
+echo "=== test 15: service-only runtime contract (no CMD / no Wine finalizer) ==="
 test ! -e "${ROOT}/images/mt5-headless/entrypoint.sh" || fail "entrypoint.sh must be deleted"
 grep -Fq 'entrypoint.sh' "$DOCKERFILE" && fail "Dockerfile must not reference entrypoint"
 grep -Eq '^CMD ' "$DOCKERFILE" && fail "Dockerfile must not declare CMD"
 grep -Fq 'ENTRYPOINT ["/init"]' "$DOCKERFILE" || fail "ENTRYPOINT /init required"
 grep -RFq 'cmd_liveness_barrier' "${ROOT}/images/mt5-headless" && fail "cmd_liveness_barrier residue"
-test -f "$FINALIZER" || fail "finalizer missing"
-grep -Fq 'wineserver -k' "$FINALIZER" || fail "finalizer must own wineserver -k"
+test ! -e "${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup" || fail "finalizer must be absent"
+grep -Fq 'cont-finish.d' "$DOCKERFILE" && fail "Dockerfile must not copy cont-finish.d"
 test -e "${ROOT}/images/mt5-headless/s6-rc.d/metatrader/type" || fail "metatrader longrun missing"
 test -e "${ROOT}/images/mt5-headless/s6-rc.d/bridge/type" || fail "bridge longrun missing"
 TESTS_RUN=$((TESTS_RUN + 9))
-pass "service-only: no CMD/barrier; wineserver-k in stage3 finalizer; s6 owns MT5+bridge"
+pass "service-only: no CMD/barrier; no wineserver -k finalizer; s6 owns MT5+bridge"
 
 echo "=== test 16: exit-code collision child 70 vs update_timeout ==="
 scan_process_candidates() {
@@ -471,9 +470,9 @@ echo "$BODY" | grep -Fq 'wineserver -k' && fail "lifecycle executable body must 
 echo "$BODY" | grep -Eq 'wineboot|pkill' && fail "lifecycle must not use wineboot/pkill"
 echo "$BODY" | grep -Fq 'kill -KILL' && fail "lifecycle must not SIGKILL"
 echo "$BODY" | grep -Eq 'kill -TERM -- -|kill -- -' && fail "lifecycle must not process-group kill"
-grep -Fq 'wineserver -k' "$FINALIZER" || fail "stage3 finalizer must own wineserver -k"
+test ! -e "${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup" || fail "no project Wine finalizer"
 TESTS_RUN=$((TESTS_RUN + 5))
-pass "wineserver -k cleanup stays in stage3 finalizer; lifecycle has no wineboot/pkill/SIGKILL/pg"
+pass "no wineserver -k in lifecycle; last containment is generic s6 stage3"
 
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"

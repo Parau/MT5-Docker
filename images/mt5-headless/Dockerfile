@@ -66,15 +66,14 @@ RUN tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz \
 
 COPY images/mt5-headless/s6-rc.d/ /etc/s6-overlay/s6-rc.d/
 COPY images/mt5-headless/user-bundles.d/ /etc/s6-overlay/user-bundles.d/
-COPY images/mt5-headless/cont-finish.d/ /etc/cont-finish.d/
 COPY images/mt5-headless/scripts/ /scripts/
 COPY vendor/bridge/ /opt/bridge/
 COPY vendor/mql5/ /vendor/mql5/
 
-RUN chmod +x /etc/cont-finish.d/10-wine-cleanup /scripts/*.sh /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s6-rc.d/window-manager/run /etc/s6-overlay/s6-rc.d/vnc-access/run \
+RUN chmod +x /scripts/*.sh /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s6-rc.d/window-manager/run /etc/s6-overlay/s6-rc.d/vnc-access/run \
     && chmod +x /etc/s6-overlay/s6-rc.d/metatrader/run /etc/s6-overlay/s6-rc.d/metatrader/finish \
     && chmod +x /etc/s6-overlay/s6-rc.d/bridge/run /etc/s6-overlay/s6-rc.d/bridge/finish \
-    && sed -i 's/\r$//' /etc/cont-finish.d/10-wine-cleanup /scripts/*.sh /scripts/configure_nt5_service.py \
+    && sed -i 's/\r$//' /scripts/*.sh /scripts/configure_nt5_service.py \
     && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/display/run /etc/s6-overlay/s6-rc.d/window-manager/run /etc/s6-overlay/s6-rc.d/vnc-access/run \
     && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/wine-bootstrap/type /etc/s6-overlay/s6-rc.d/wine-bootstrap/up \
     && sed -i 's/\r$//' /etc/s6-overlay/s6-rc.d/install-mt5/type /etc/s6-overlay/s6-rc.d/install-mt5/up \

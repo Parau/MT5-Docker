@@ -10,7 +10,6 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${ROOT}/images/mt5-headless/scripts/start_bridge.sh"
 DOCKERFILE="${ROOT}/images/mt5-headless/Dockerfile"
-FINALIZER="${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup"
 
 TESTS_RUN=0
 TESTS_PASSED=0

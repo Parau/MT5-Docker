@@ -9,7 +9,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN="${ROOT}/images/mt5-headless/s6-rc.d/bridge/run"
 FINISH="${ROOT}/images/mt5-headless/s6-rc.d/bridge/finish"
 DOCKERFILE="${ROOT}/images/mt5-headless/Dockerfile"
-FINALIZER="${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup"
 TYPE_FILE="${ROOT}/images/mt5-headless/s6-rc.d/bridge/type"
 DEP_FILE="${ROOT}/images/mt5-headless/s6-rc.d/bridge/dependencies.d/metatrader"
 BUNDLE_FILE="${ROOT}/images/mt5-headless/user-bundles.d/user/contents.d/bridge"
@@ -229,24 +228,20 @@ grep -Fq 'ENTRYPOINT ["/init"]' "$DOCKERFILE" || fail "ENTRYPOINT /init required
 TESTS_RUN=$((TESTS_RUN + 4))
 pass "service-only runtime: entrypoint/CMD removed"
 
-echo "=== test 15: wineserver-k owned by stage3 finalizer ==="
-test -f "$FINALIZER" || fail "finalizer missing"
-grep -Fq 'wineserver -k' "$FINALIZER" || fail "finalizer must call wineserver -k"
-grep -Fq 'cmd_liveness_barrier' "$FINALIZER" && fail "finalizer must not be a liveness barrier"
-# Executable (non-comment) wineserver -k must exist only in the finalizer.
+echo "=== test 15: no project-specific global wineserver -k ==="
+test ! -e "${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup" || fail "finalizer must be deleted"
+grep -Fq 'cont-finish.d' "$DOCKERFILE" && fail "Dockerfile must not reference cont-finish.d"
 while IFS= read -r line; do
+    [ -z "$line" ] && continue
     file="${line%%:*}"
     rest="${line#*:}"
-    case "$file" in
-        */cont-finish.d/10-wine-cleanup) continue ;;
-    esac
     code="$(printf '%s\n' "$rest" | sed 's/#.*//')"
     if printf '%s\n' "$code" | grep -Fq 'wineserver -k'; then
-        fail "extra executable wineserver -k in ${file}: ${rest}"
+        fail "executable wineserver -k in ${file}: ${rest}"
     fi
 done < <(grep -Rn 'wineserver -k' "${ROOT}/images/mt5-headless" || true)
-TESTS_RUN=$((TESTS_RUN + 4))
-pass "global wineserver-k is only in cont-finish.d finalizer"
+TESTS_RUN=$((TESTS_RUN + 3))
+pass "no project-specific wineserver -k; stage3 generic containment only"
 
 echo "=== test 16: production defaults ==="
 grep -Fq 'BRIDGE_LIFECYCLE_SCRIPT:-/scripts/start_bridge.sh' "$RUN" || fail "lifecycle default"
