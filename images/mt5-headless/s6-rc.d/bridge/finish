@@ -21,8 +21,23 @@ pgid="${4:-}"
 BRIDGE_FINISH_QUIESCE_TIMEOUT_SECONDS="${BRIDGE_FINISH_QUIESCE_TIMEOUT_SECONDS:-2}"
 BRIDGE_FINISH_QUIESCE_POLL_SECONDS="${BRIDGE_FINISH_QUIESCE_POLL_SECONDS:-0.2}"
 
+# Robust PGID lookup: never tokenize /proc/PID/stat (comm may contain spaces/')').
+process_pgid() {
+    local pid="$1"
+    local value
+
+    value="$(ps -o pgid= -p "$pid" 2>/dev/null || true)"
+    value="$(printf '%s' "$value" | tr -d '[:space:]')"
+
+    case "$value" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+
+    printf '%s\n' "$value"
+}
+
 caller_pgid() {
-    awk '{ print $5; exit }' /proc/self/stat 2>/dev/null || true
+    process_pgid "$$"
 }
 
 pgid_is_valid() {
@@ -44,7 +59,10 @@ process_group_has_live_members() {
         case "${pid}" in
             ''|*[!0-9]*) continue ;;
         esac
-        pgrp="$(awk '{ print $5; exit }' "/proc/${pid}/stat" 2>/dev/null || true)"
+        pgrp="$(process_pgid "${pid}" || true)"
+        if [ -z "${pgrp}" ]; then
+            continue
+        fi
         if [ "${pgrp}" != "${candidate}" ]; then
             continue
         fi

@@ -39,6 +39,18 @@ assert_eq() {
     fi
 }
 
+# Independent of production finish: never tokenize /proc/PID/stat for pgrp.
+read_pgid() {
+    local pid="$1"
+    local value
+    value="$(ps -o pgid= -p "$pid" 2>/dev/null || true)"
+    value="$(printf '%s' "$value" | tr -d '[:space:]')"
+    case "$value" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    printf '%s\n' "$value"
+}
+
 echo "=== test 1: type is longrun ==="
 TYPE_VAL="$(tr -d '\r\n' < "$TYPE_FILE")"
 assert_eq "longrun" "$TYPE_VAL" "bridge type"
@@ -109,15 +121,14 @@ echo "=== test 8: finish valid PGID cleanup ==="
 CASE_DIR="$(mktemp -d /tmp/bridge-s6.XXXXXX)"
 setsid bash -c 'sleep 300' >/dev/null 2>&1 &
 CHILD=$!
-# Wait until child exists, then read its PGID (session leader == pgid).
+# Wait until child exists, then read its PGID via ps (not /proc/.../stat $5).
 for _i in $(seq 1 50); do
     if kill -0 "$CHILD" 2>/dev/null; then
         break
     fi
     sleep 0.05
 done
-PGID="$(awk '{ print $5; exit }' "/proc/${CHILD}/stat")"
-test -n "$PGID" || fail "could not read child pgid"
+PGID="$(read_pgid "$CHILD")" || fail "could not read child pgid"
 set +e
 OUTPUT="$(BRIDGE_FINISH_QUIESCE_TIMEOUT_SECONDS=2 bash "$FINISH" 42 0 /tmp/bridge-svc "$PGID" 2>&1)"
 STATUS=$?
@@ -141,7 +152,7 @@ for _i in $(seq 1 50); do
     kill -0 "$CHILD" 2>/dev/null && break
     sleep 0.05
 done
-PGID="$(awk '{ print $5; exit }' "/proc/${CHILD}/stat")"
+PGID="$(read_pgid "$CHILD")" || fail "could not read signalled child pgid"
 set +e
 OUTPUT="$(bash "$FINISH" 256 15 /tmp/bridge-svc "$PGID" 2>&1)"
 STATUS=$?
@@ -168,7 +179,7 @@ echo "=== test 11: finish refuses caller/self PGID ==="
 set +e
 OUTPUT="$(
     setsid bash -c '
-        pgid="$(awk "{ print \$5; exit }" /proc/self/stat)"
+        pgid="$(ps -o pgid= -p $$ | tr -d "[:space:]")"
         exec bash "'"$FINISH"'" 42 0 /tmp/bridge-svc "$pgid"
     ' 2>&1
 )"
@@ -192,6 +203,22 @@ echo "$BODY" | grep -Eq 'pkill|wineboot' && fail "finish pkill/wineboot"
 echo "$BODY" | grep -Fq 'terminal64' && fail "finish must not target MT5"
 TESTS_RUN=$((TESTS_RUN + 3))
 pass "finish only targets old bridge PGID"
+
+echo "=== test 13b: static — no fragile /proc/*/stat \$5 pgrp parsing ==="
+if grep -E 'awk.*print \$5' "$FINISH" | grep -q '/proc'; then
+    fail "finish must not use awk \$5 on /proc/*/stat"
+fi
+if grep -Fq "awk '{ print \$5; exit }'" "$FINISH"; then
+    fail "finish must not retain awk '{ print \$5; exit }' anti-pattern"
+fi
+if ! grep -Fq 'ps -o pgid=' "$FINISH"; then
+    fail "finish must prefer ps -o pgid="
+fi
+if ! grep -Fq 'process_pgid' "$FINISH"; then
+    fail "finish must define process_pgid"
+fi
+TESTS_RUN=$((TESTS_RUN + 4))
+pass "finish uses robust process_pgid (no awk \$5 on stat)"
 
 echo "=== test 14: entrypoint has no bridge ownership ==="
 grep -Fq '/scripts/start_bridge.sh &' "$ENTRYPOINT" && fail "CMD must not background bridge"
