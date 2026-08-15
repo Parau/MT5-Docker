@@ -1,5 +1,5 @@
 ampup:
-docker compose --profile amp up -d
+	docker compose --profile amp up -d
 
 ampdown:
-docker compose --profile amp down
+	docker compose --profile amp down
