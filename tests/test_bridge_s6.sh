@@ -8,7 +8,8 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN="${ROOT}/images/mt5-headless/s6-rc.d/bridge/run"
 FINISH="${ROOT}/images/mt5-headless/s6-rc.d/bridge/finish"
-ENTRYPOINT="${ROOT}/images/mt5-headless/entrypoint.sh"
+DOCKERFILE="${ROOT}/images/mt5-headless/Dockerfile"
+FINALIZER="${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup"
 TYPE_FILE="${ROOT}/images/mt5-headless/s6-rc.d/bridge/type"
 DEP_FILE="${ROOT}/images/mt5-headless/s6-rc.d/bridge/dependencies.d/metatrader"
 BUNDLE_FILE="${ROOT}/images/mt5-headless/user-bundles.d/user/contents.d/bridge"
@@ -220,21 +221,32 @@ fi
 TESTS_RUN=$((TESTS_RUN + 4))
 pass "finish uses robust process_pgid (no awk \$5 on stat)"
 
-echo "=== test 14: entrypoint has no bridge ownership ==="
-grep -Fq '/scripts/start_bridge.sh &' "$ENTRYPOINT" && fail "CMD must not background bridge"
-grep -Fq 'BRIDGE_PID' "$ENTRYPOINT" && fail "CMD must not use BRIDGE_PID"
-grep -Fq 'cmd_wait_bridge_wrapper' "$ENTRYPOINT" && fail "CMD must not wait bridge wrapper"
-grep -Fq 'targeting bridge lifecycle wrapper' "$ENTRYPOINT" && fail "CMD must not target wrapper"
-grep -Fq "Bridge RPyC é gerenciada pelo longrun s6 'bridge'" "$ENTRYPOINT" || fail "s6 bridge ownership message"
-TESTS_RUN=$((TESTS_RUN + 5))
-pass "entrypoint no longer owns the bridge"
+echo "=== test 14: no transitional CMD/entrypoint ==="
+test ! -e "${ROOT}/images/mt5-headless/entrypoint.sh" || fail "entrypoint.sh must be deleted"
+grep -Fq 'entrypoint.sh' "$DOCKERFILE" && fail "Dockerfile must not reference entrypoint.sh"
+grep -Eq '^CMD ' "$DOCKERFILE" && fail "Dockerfile must not declare a default CMD"
+grep -Fq 'ENTRYPOINT ["/init"]' "$DOCKERFILE" || fail "ENTRYPOINT /init required"
+TESTS_RUN=$((TESTS_RUN + 4))
+pass "service-only runtime: entrypoint/CMD removed"
 
-echo "=== test 15: CMD barrier and wineserver-k remain ==="
-grep -Fq 'cmd_liveness_barrier' "$ENTRYPOINT" || fail "barrier missing"
-grep -Fq 'wineserver -k || true' "$ENTRYPOINT" || fail "global wineserver-k missing"
-grep -Fq 'trap cleanup EXIT' "$ENTRYPOINT" || fail "cleanup trap missing"
-TESTS_RUN=$((TESTS_RUN + 3))
-pass "CMD barrier and global wineserver-k preserved"
+echo "=== test 15: wineserver-k owned by stage3 finalizer ==="
+test -f "$FINALIZER" || fail "finalizer missing"
+grep -Fq 'wineserver -k' "$FINALIZER" || fail "finalizer must call wineserver -k"
+grep -Fq 'cmd_liveness_barrier' "$FINALIZER" && fail "finalizer must not be a liveness barrier"
+# Executable (non-comment) wineserver -k must exist only in the finalizer.
+while IFS= read -r line; do
+    file="${line%%:*}"
+    rest="${line#*:}"
+    case "$file" in
+        */cont-finish.d/10-wine-cleanup) continue ;;
+    esac
+    code="$(printf '%s\n' "$rest" | sed 's/#.*//')"
+    if printf '%s\n' "$code" | grep -Fq 'wineserver -k'; then
+        fail "extra executable wineserver -k in ${file}: ${rest}"
+    fi
+done < <(grep -Rn 'wineserver -k' "${ROOT}/images/mt5-headless" || true)
+TESTS_RUN=$((TESTS_RUN + 4))
+pass "global wineserver-k is only in cont-finish.d finalizer"
 
 echo "=== test 16: production defaults ==="
 grep -Fq 'BRIDGE_LIFECYCLE_SCRIPT:-/scripts/start_bridge.sh' "$RUN" || fail "lifecycle default"

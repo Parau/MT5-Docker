@@ -1,0 +1,28 @@
+#!/command/with-contenv bash
+# Stage3 Wine finalizer: best-effort wineserver -k after s6 services stop.
+#
+# Data flow: s6-overlay stage3 runs /etc/cont-finish.d after user services are
+# already down. Uses WINEPREFIX from the container env (with-contenv) so the
+# broker-local wineserver is targeted. Always exits 0 so a fatal metatrader
+# exitcode written earlier is not overwritten by wineserver failure.
+# Limitations: prefix-wide last resort only; never pkill/wineboot/SIGKILL/pg.
+readonly LOG_PREFIX="[WINE-FINALIZER]"
+
+WINEPREFIX="${WINEPREFIX:-/config/.wine}"
+WINEDEBUG="${WINEDEBUG:--all}"
+export WINEPREFIX WINEDEBUG
+
+echo "${LOG_PREFIX} state=START action=wineserver-k"
+
+set +e
+wineserver -k
+status=$?
+set -e
+
+if [ "${status}" -eq 0 ]; then
+    echo "${LOG_PREFIX} state=COMPLETED status=${status}"
+else
+    echo "${LOG_PREFIX} state=COMPLETED status=${status} result=best_effort_failure"
+fi
+
+exit 0

@@ -8,7 +8,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${ROOT}/images/mt5-headless/scripts/start_bridge.sh"
-ENTRYPOINT="${ROOT}/images/mt5-headless/entrypoint.sh"
+FINALIZER="${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup"
+DOCKERFILE="${ROOT}/images/mt5-headless/Dockerfile"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -346,22 +347,13 @@ grep -q "state=BRIDGE_EXIT code=42" "${CASE_DIR}/wrapper.log" || fail "BRIDGE_EX
 pass "final crash remains one-shot exit42"
 rm -rf "$CASE_DIR"
 
-echo "=== test 8: CMD no longer owns bridge shutdown ==="
-grep -Fq 'BRIDGE_PID' "$ENTRYPOINT" && fail "BRIDGE_PID must be gone"
-grep -Fq 'cmd_wait_bridge_wrapper' "$ENTRYPOINT" && fail "cmd_wait_bridge_wrapper must be gone"
-grep -Fq 'targeting bridge lifecycle wrapper' "$ENTRYPOINT" && fail "CMD must not target wrapper"
-grep -Fq '/scripts/start_bridge.sh &' "$ENTRYPOINT" && fail "CMD must not spawn bridge"
-# shellcheck source=../images/mt5-headless/entrypoint.sh
-source "$ENTRYPOINT"
-set +e
-OUTPUT="$(cmd_on_term 2>&1)"
-STATUS=$?
-set -e
-assert_eq "0" "$STATUS" "simple CMD TERM"
-echo "$OUTPUT" | grep -q "CMD: shutdown signal received." || fail "CMD TERM log"
-echo "$OUTPUT" | grep -q "targeting bridge" && fail "must not target bridge"
+echo "=== test 8: no CMD owns bridge shutdown ==="
+test ! -e "${ROOT}/images/mt5-headless/entrypoint.sh" || fail "entrypoint.sh must be deleted"
+grep -Fq 'BRIDGE_PID' "$DOCKERFILE" && fail "Dockerfile must not mention BRIDGE_PID"
+grep -Eq '^CMD ' "$DOCKERFILE" && fail "Dockerfile must not declare CMD"
+grep -Fq 'cmd_wait_bridge_wrapper' "${ROOT}/images/mt5-headless/scripts/start_bridge.sh" && fail "wrapper must not wait as CMD"
 TESTS_RUN=$((TESTS_RUN + 4))
-pass "CMD TERM is bridge-agnostic"
+pass "bridge shutdown is s6 finish-owned; no CMD TERM handler"
 
 echo "=== test 9: static no SIGKILL/pg/wineserver-k in wrapper ==="
 BODY="$(awk 'NR==1{next} /^#/{next} {print}' "$SCRIPT")"
@@ -369,9 +361,9 @@ echo "$BODY" | grep -Fq 'wineserver -k' && fail "wrapper wineserver-k"
 echo "$BODY" | grep -Fq 'kill -KILL' && fail "wrapper SIGKILL"
 echo "$BODY" | grep -Eq 'pkill|wineboot' && fail "wrapper pkill/wineboot"
 echo "$BODY" | grep -Eq 'kill -TERM -- -|kill -- -' && fail "wrapper process-group"
-grep -Fq 'wineserver -k || true' "$ENTRYPOINT" || fail "global fallback preserved"
+grep -Fq 'wineserver -k' "$FINALIZER" || fail "global fallback must live in finalizer"
 TESTS_RUN=$((TESTS_RUN + 5))
-pass "wrapper has no SIGKILL/pg/wineserver-k; CMD fallback remains"
+pass "wrapper has no SIGKILL/pg/wineserver-k; stage3 finalizer owns fallback"
 
 echo "=== test 10: deterministic spawn→PID registration race ==="
 setup_runtime

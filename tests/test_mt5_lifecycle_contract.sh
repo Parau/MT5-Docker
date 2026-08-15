@@ -9,7 +9,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${ROOT}/images/mt5-headless/scripts/mt5_lifecycle.sh"
-ENTRYPOINT="${ROOT}/images/mt5-headless/entrypoint.sh"
+DOCKERFILE="${ROOT}/images/mt5-headless/Dockerfile"
+FINALIZER="${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -419,40 +420,18 @@ grep -n 'set_state "RUNNING" "child_pid=' "$SCRIPT" | grep -q 'child_pid=${child
 TESTS_RUN=$((TESTS_RUN + 2))
 pass "RUNNING is process/lifecycle state only; no MT5 readiness"
 
-echo "=== test 15: entrypoint liveness contract ==="
-if grep -Fq '/scripts/mt5_lifecycle.sh &' "$ENTRYPOINT"; then
-    fail "entrypoint must not background mt5_lifecycle.sh"
-fi
-if grep -Fq 'MT5_LIFECYCLE_PID' "$ENTRYPOINT"; then
-    fail "entrypoint must not capture MT5_LIFECYCLE_PID"
-fi
-if grep -Fq 'wait "$MT5_LIFECYCLE_PID"' "$ENTRYPOINT"; then
-    fail "entrypoint must not wait on lifecycle"
-fi
-grep -Fq "MetaTrader lifecycle é gerenciado pelo longrun s6 'metatrader'" "$ENTRYPOINT" || fail "metatrader ownership message"
-grep -Fq '/scripts/start_bridge.sh &' "$ENTRYPOINT" && fail "CMD must not background bridge"
-grep -Fq 'BRIDGE_PID' "$ENTRYPOINT" && fail "CMD must not use BRIDGE_PID"
-grep -Fq "Bridge RPyC é gerenciada pelo longrun s6 'bridge'" "$ENTRYPOINT" || fail "s6 bridge ownership message"
-grep -Fq 'cmd_liveness_barrier' "$ENTRYPOINT" || fail "neutral liveness barrier"
-grep -Fq 'wineserver -k || true' "$ENTRYPOINT" || fail "cleanup wineserver -k"
-grep -Fq 'trap cleanup EXIT' "$ENTRYPOINT" || fail "trap cleanup EXIT"
-grep -Fq 'trap cmd_on_term TERM INT' "$ENTRYPOINT" || fail "CMD TERM/INT handler"
-if grep -Fq 'ERRO: RUN_MT5=1, mas MT5_EXE não foi encontrado' "$ENTRYPOINT"; then
-    fail "CMD must not own MT5_EXE fatal validation"
-fi
-ENTRYPOINT_PATH="$ENTRYPOINT" python3 - <<'PY' || fail "entrypoint ownership order"
-from pathlib import Path
-import os
-text = Path(os.environ["ENTRYPOINT_PATH"]).read_text()
-assert "/scripts/mt5_lifecycle.sh &" not in text
-assert "MT5_LIFECYCLE_PID" not in text
-assert "/scripts/start_bridge.sh &" not in text
-assert "BRIDGE_PID" not in text
-assert "cmd_liveness_barrier" in text
-print("liveness order OK")
-PY
-TESTS_RUN=$((TESTS_RUN + 11))
-pass "CMD barrier is transitional; metatrader and bridge are s6-owned"
+echo "=== test 15: service-only runtime contract (no CMD barrier) ==="
+test ! -e "${ROOT}/images/mt5-headless/entrypoint.sh" || fail "entrypoint.sh must be deleted"
+grep -Fq 'entrypoint.sh' "$DOCKERFILE" && fail "Dockerfile must not reference entrypoint"
+grep -Eq '^CMD ' "$DOCKERFILE" && fail "Dockerfile must not declare CMD"
+grep -Fq 'ENTRYPOINT ["/init"]' "$DOCKERFILE" || fail "ENTRYPOINT /init required"
+grep -RFq 'cmd_liveness_barrier' "${ROOT}/images/mt5-headless" && fail "cmd_liveness_barrier residue"
+test -f "$FINALIZER" || fail "finalizer missing"
+grep -Fq 'wineserver -k' "$FINALIZER" || fail "finalizer must own wineserver -k"
+test -e "${ROOT}/images/mt5-headless/s6-rc.d/metatrader/type" || fail "metatrader longrun missing"
+test -e "${ROOT}/images/mt5-headless/s6-rc.d/bridge/type" || fail "bridge longrun missing"
+TESTS_RUN=$((TESTS_RUN + 9))
+pass "service-only: no CMD/barrier; wineserver-k in stage3 finalizer; s6 owns MT5+bridge"
 
 echo "=== test 16: exit-code collision child 70 vs update_timeout ==="
 scan_process_candidates() {
@@ -492,8 +471,9 @@ echo "$BODY" | grep -Fq 'wineserver -k' && fail "lifecycle executable body must 
 echo "$BODY" | grep -Eq 'wineboot|pkill' && fail "lifecycle must not use wineboot/pkill"
 echo "$BODY" | grep -Fq 'kill -KILL' && fail "lifecycle must not SIGKILL"
 echo "$BODY" | grep -Eq 'kill -TERM -- -|kill -- -' && fail "lifecycle must not process-group kill"
-TESTS_RUN=$((TESTS_RUN + 4))
-pass "wineserver -k cleanup stays outside lifecycle; no wineboot/pkill/SIGKILL/pg"
+grep -Fq 'wineserver -k' "$FINALIZER" || fail "stage3 finalizer must own wineserver -k"
+TESTS_RUN=$((TESTS_RUN + 5))
+pass "wineserver -k cleanup stays in stage3 finalizer; lifecycle has no wineboot/pkill/SIGKILL/pg"
 
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"

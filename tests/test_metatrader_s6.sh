@@ -9,7 +9,8 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN="${ROOT}/images/mt5-headless/s6-rc.d/metatrader/run"
 FINISH="${ROOT}/images/mt5-headless/s6-rc.d/metatrader/finish"
-ENTRYPOINT="${ROOT}/images/mt5-headless/entrypoint.sh"
+DOCKERFILE="${ROOT}/images/mt5-headless/Dockerfile"
+FINALIZER="${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup"
 TYPE_FILE="${ROOT}/images/mt5-headless/s6-rc.d/metatrader/type"
 DEP_FILE="${ROOT}/images/mt5-headless/s6-rc.d/metatrader/dependencies.d/python-bootstrap"
 BUNDLE_FILE="${ROOT}/images/mt5-headless/user-bundles.d/user/contents.d/metatrader"
@@ -204,32 +205,34 @@ pass "halt failure does not allow restart (still 125)"
 rm -rf "$CASE_DIR"
 unset HALT_EXIT || true
 
-echo "=== test 12: entrypoint does not call/wait lifecycle ==="
-if grep -Eq 'mt5_lifecycle\.sh &|MT5_LIFECYCLE_PID|wait "\$MT5_LIFECYCLE_PID"' "$ENTRYPOINT"; then
-    fail "entrypoint still owns lifecycle"
-fi
-TESTS_RUN=$((TESTS_RUN + 1))
-pass "entrypoint does not spawn or wait lifecycle"
+echo "=== test 12: no transitional CMD owns lifecycle ==="
+test ! -e "${ROOT}/images/mt5-headless/entrypoint.sh" || fail "entrypoint.sh must be deleted"
+grep -Fq 'entrypoint.sh' "$DOCKERFILE" && fail "Dockerfile must not copy entrypoint"
+grep -Eq '^CMD ' "$DOCKERFILE" && fail "Dockerfile must not declare CMD"
+TESTS_RUN=$((TESTS_RUN + 3))
+pass "no CMD/entrypoint owns lifecycle"
 
 echo "=== test 13: bridge is s6-owned, not CMD-owned ==="
-grep -Fq '/scripts/start_bridge.sh &' "$ENTRYPOINT" && fail "CMD must not background bridge"
-grep -Fq 'BRIDGE_PID' "$ENTRYPOINT" && fail "CMD must not use BRIDGE_PID"
-grep -Fq "Bridge RPyC é gerenciada pelo longrun s6 'bridge'" "$ENTRYPOINT" || fail "s6 bridge message"
+test -e "${ROOT}/images/mt5-headless/s6-rc.d/bridge/type" || fail "bridge longrun missing"
+test -e "${ROOT}/images/mt5-headless/s6-rc.d/bridge/dependencies.d/metatrader" || fail "bridge depends on metatrader"
+grep -Fq 'BRIDGE_PID' "$DOCKERFILE" && fail "Dockerfile must not mention BRIDGE_PID"
 TESTS_RUN=$((TESTS_RUN + 3))
-pass "bridge ownership moved off CMD"
+pass "bridge ownership is s6 longrun"
 
-echo "=== test 14: neutral barrier exists ==="
-grep -Fq 'cmd_liveness_barrier' "$ENTRYPOINT" || fail "barrier function missing"
-grep -Fq 'sleep 3600' "$ENTRYPOINT" || fail "barrier sleep missing"
-TESTS_RUN=$((TESTS_RUN + 2))
-pass "neutral CMD liveness barrier exists"
+echo "=== test 14: no CMD liveness barrier; stage3 finalizer present ==="
+test ! -e "${ROOT}/images/mt5-headless/entrypoint.sh" || fail "entrypoint absent"
+grep -RFq 'cmd_liveness_barrier' "${ROOT}/images/mt5-headless" && fail "cmd_liveness_barrier residue"
+test -f "$FINALIZER" || fail "finalizer missing"
+grep -Fq 'wineserver -k' "$FINALIZER" || fail "finalizer wineserver-k"
+TESTS_RUN=$((TESTS_RUN + 4))
+pass "service-only liveness; wineserver-k in stage3 finalizer"
 
 echo "=== test 15: no readiness / notification-fd ==="
 BODY="$(awk 'NR==1{next} /^#/{next} {print}' "$RUN"; awk 'NR==1{next} /^#/{next} {print}' "$FINISH")"
 echo "$BODY" | grep -Eq 'notification-fd|s6-notify|MetaTrader5\.initialize|terminal_info' && fail "readiness in run/finish"
-grep -Fq 'notification-fd' "$ENTRYPOINT" && fail "notification-fd in entrypoint"
+grep -Fq 'notification-fd' "$FINALIZER" && fail "notification-fd in finalizer"
 TESTS_RUN=$((TESTS_RUN + 2))
-pass "no readiness/notification-fd in metatrader run/finish/CMD"
+pass "no readiness/notification-fd in metatrader run/finish/finalizer"
 
 echo "=== test 16: production defaults ==="
 grep -Fq 'MT5_LIFECYCLE_SCRIPT:-/scripts/mt5_lifecycle.sh' "$RUN" || fail "lifecycle default"

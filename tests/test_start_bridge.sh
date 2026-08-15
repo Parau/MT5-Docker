@@ -9,7 +9,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${ROOT}/images/mt5-headless/scripts/start_bridge.sh"
-ENTRYPOINT="${ROOT}/images/mt5-headless/entrypoint.sh"
+DOCKERFILE="${ROOT}/images/mt5-headless/Dockerfile"
+FINALIZER="${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -261,14 +262,14 @@ rm -rf "$CASE_DIR"
 echo "=== test 3: RUN_BRIDGE not owned by start_bridge or CMD ==="
 BODY="$(executable_body "$SCRIPT")"
 echo "$BODY" | grep -Eq 'RUN_BRIDGE' && fail "start_bridge must not read RUN_BRIDGE"
-grep -Fq '/scripts/start_bridge.sh &' "$ENTRYPOINT" && fail "CMD must not background bridge"
-grep -Fq 'BRIDGE_PID' "$ENTRYPOINT" && fail "CMD must not use BRIDGE_PID"
-grep -Fq "Bridge RPyC é gerenciada pelo longrun s6 'bridge'" "$ENTRYPOINT" || fail "s6 bridge ownership message"
+test ! -e "${ROOT}/images/mt5-headless/entrypoint.sh" || fail "entrypoint.sh must be deleted"
+grep -Eq '^CMD ' "$DOCKERFILE" && fail "Dockerfile must not declare CMD"
 GATE="${ROOT}/images/mt5-headless/scripts/s6_stage2_bridge_gate.sh"
 test -f "$GATE" || fail "stage2 gate script missing"
 grep -Fq 'RUN_BRIDGE' "$GATE" || fail "stage2 gate must read RUN_BRIDGE"
+test -e "${ROOT}/images/mt5-headless/s6-rc.d/bridge/type" || fail "bridge longrun missing"
 TESTS_RUN=$((TESTS_RUN + 5))
-pass "RUN_BRIDGE is stage2-gate owned; CMD does not spawn bridge"
+pass "RUN_BRIDGE is stage2-gate owned; no CMD spawn"
 
 echo "=== test 4: first probe success ==="
 setup_case
