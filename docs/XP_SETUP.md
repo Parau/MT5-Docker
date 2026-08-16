@@ -97,7 +97,7 @@ installer while MT5 + Edge WebView are busy. Symptoms:
 
 - Logs stop at `BOOTSTRAP_PYTHON: instalando Python 3.11.9...`
 - `wine python --version` works, but `import MetaTrader5` fails
-- RPyC bridge never starts (entrypoint runs bridge only after bootstrap)
+- RPyC bridge never starts (s6 `bridge` longrun is gated after bootstrap / `RUN_BRIDGE`)
 
 **Check:**
 

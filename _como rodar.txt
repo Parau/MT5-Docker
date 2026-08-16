@@ -169,22 +169,22 @@ docker compose --profile tickmill --profile xp --profile amp up -d
 MANUTENÇÃO
 ══════════════════════════════════════════════════════════════════════════════
 
-CRLF após editar scripts no Windows
+CRLF após editar scripts no Windows (Dockerfile também normaliza na build)
 
-sed -i 's/\r$//' images/mt5-headless/entrypoint.sh images/mt5-headless/scripts/*.sh
+sed -i 's/\r$//' images/mt5-headless/scripts/*.sh
 
 
-Apagar volume Tickmill (perde login + whitelist)
+Apagar volume Tickmill (DESTROI login + whitelist — nunca no uso diário)
 
 docker compose --profile tickmill down -v
 
 
-Apagar volume XP
+Apagar volume XP (DESTROI dados do volume)
 
 docker compose --profile xp down -v
 
 
-Apagar volume AMP
+Apagar volume AMP (DESTROI dados do volume)
 
 docker compose --profile amp down -v
 

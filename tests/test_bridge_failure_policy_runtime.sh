@@ -153,10 +153,15 @@ for i in $(seq 1 90); do
         code="$(docker inspect -f '{{.State.ExitCode}}' "$NAME")"
         fail "unexpected stop exit=${code} below budget"
     fi
-    if [ -z "$mt_pid" ]; then
-        mt_pid="$(docker exec "$NAME" bash -lc '/command/s6-svstat -o pid /run/service/metatrader' 2>/dev/null | tr -d '[:space:]' || true)"
+    if [ -z "$mt_pid" ] || [ "$mt_pid" = "-1" ] || ! [[ "$mt_pid" =~ ^[0-9]+$ ]]; then
+        cand="$(docker exec "$NAME" bash -lc '/command/s6-svstat -o pid /run/service/metatrader' 2>/dev/null | tr -d '[:space:]' || true)"
+        if [[ "$cand" =~ ^[0-9]+$ ]] && [ "$cand" -gt 1 ]; then
+            mt_pid="$cand"
+        fi
     fi
     if [ -f "${SMOKE}/deaths" ] && [ "$(cat "${SMOKE}/deaths")" -ge 2 ]; then
+        [ -n "$mt_pid" ] && [[ "$mt_pid" =~ ^[0-9]+$ ]] && [ "$mt_pid" -gt 1 ] || \
+          fail "MT PID not captured before bridge restart"
         sleep 3
         running="$(docker inspect -f '{{.State.Running}}' "$NAME")"
         assert_eq "true" "$running" "still running after restart"
