@@ -11,6 +11,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${ROOT}/images/mt5-headless/scripts/start_bridge.sh"
 LIFECYCLE="${ROOT}/images/mt5-headless/scripts/mt5_lifecycle.sh"
 DOCKERFILE="${ROOT}/images/mt5-headless/Dockerfile"
+# shellcheck source=lib/proc_stat_fixture.sh
+source "${ROOT}/tests/lib/proc_stat_fixture.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -54,8 +56,7 @@ write_proc_stat() {
     local comm="$3"
     local starttime="$4"
     local state="${5:-S}"
-    printf '%s (%s) %s 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %s 0 0 0 0 0 0 0 0\n' \
-        "$pid" "$comm" "$state" "$starttime" >"${dir}/stat"
+    write_linux_proc_stat "${dir}/stat" "$pid" "$comm" "$state" "$starttime"
 }
 
 # kind: normal|updater|helper_bash|helper_python|unreadable|zombie|broken_exe
@@ -218,6 +219,39 @@ wait_for_log() {
         sleep 0.1
     done
     return 1
+}
+
+wait_for_log_count() {
+    local file="$1"
+    local pattern="$2"
+    local need="$3"
+    local i n
+    for i in $(seq 1 80); do
+        n="$(grep -c "$pattern" "$file" 2>/dev/null || true)"
+        if [ "${n:-0}" -ge "$need" ]; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
+call_bridge_starttime() {
+    local pid="$1"
+    BRIDGE_PROC_ROOT="$PROC_ROOT" bash -c '
+set -Eeuo pipefail
+source "$1"
+bridge_proc_starttime "$2"
+' _ "$SCRIPT" "$pid"
+}
+
+call_bridge_identity() {
+    local pid="$1"
+    BRIDGE_PROC_ROOT="$PROC_ROOT" bash -c '
+set -Eeuo pipefail
+source "$1"
+bridge_process_identity "$2"
+' _ "$SCRIPT" "$pid"
 }
 
 wine_probe_forbidden() {
@@ -531,6 +565,62 @@ echo "$OUTPUT" | grep -q "wait_seconds=180" || fail "fallback wait_seconds=180"
 pass "invalid BRIDGE_WAIT_SECONDS warns and falls back to 180"
 rm -rf "$CASE_DIR"
 
+echo "=== test 15b: field 22 starttime and identity are discriminant ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+assert_eq "1000" "$(independent_stat_field "${PROC_ROOT}/100/stat" 22)" "independent field22=1000"
+assert_eq "1000" "$(call_bridge_starttime 100)" "bridge_proc_starttime(100)=1000"
+assert_eq "100:1000" "$(call_bridge_identity 100)" "identity=100:1000"
+id1="$(call_bridge_identity 100)"
+write_mt5_proc "$PROC_ROOT" 100 2000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+assert_eq "2000" "$(independent_stat_field "${PROC_ROOT}/100/stat" 22)" "independent field22=2000"
+assert_eq "2000" "$(call_bridge_starttime 100)" "bridge_proc_starttime(100)=2000"
+assert_eq "100:2000" "$(call_bridge_identity 100)" "identity=100:2000"
+id2="$(call_bridge_identity 100)"
+[ "$id1" != "$id2" ] || fail "identities must differ after starttime rewrite"
+assert_eq "100:1000" "$id1" "id1 frozen"
+assert_eq "100:2000" "$id2" "id2 rewritten"
+pass "field22 1000→2000; identities 100:1000 != 100:2000"
+rm -rf "$CASE_DIR"
+
+echo "=== test 15c: comm with spaces still yields field 22 ==="
+setup_case
+mkdir -p "${PROC_ROOT}/101"
+write_linux_proc_stat "${PROC_ROOT}/101/stat" 101 "Meta Trader" S 3000
+assert_eq "3000" "$(independent_stat_field "${PROC_ROOT}/101/stat" 22)" "independent field22 with spaces"
+assert_eq "Meta Trader" "$(independent_stat_field "${PROC_ROOT}/101/stat" 2)" "comm preserves spaces"
+assert_eq "3000" "$(call_bridge_starttime 101)" "bridge_proc_starttime with spaced comm"
+assert_eq "101:3000" "$(call_bridge_identity 101)" "identity with spaced comm"
+pass "comm with spaces: starttime=3000"
+rm -rf "$CASE_DIR"
+
+echo "=== test 15d: comm containing ) uses last parenthesis ==="
+setup_case
+mkdir -p "${PROC_ROOT}/102"
+write_linux_proc_stat "${PROC_ROOT}/102/stat" 102 "Meta)Trader" S 4000
+assert_eq "4000" "$(independent_stat_field "${PROC_ROOT}/102/stat" 22)" "independent field22 with ) in comm"
+assert_eq "Meta)Trader" "$(independent_stat_field "${PROC_ROOT}/102/stat" 2)" "comm keeps inner )"
+assert_eq "4000" "$(call_bridge_starttime 102)" "production last-) parse"
+assert_eq "102:4000" "$(call_bridge_identity 102)" "identity with ) in comm"
+pass "comm with ) : starttime=4000 via last parenthesis"
+rm -rf "$CASE_DIR"
+
+echo "=== test 15e: fake field22 matches Linux /proc/self/stat layout ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+real_start="$(independent_stat_field /proc/self/stat 22)"
+case "${real_start}" in
+    ''|*[!0-9]*) fail "real /proc/self/stat field22 must be numeric, got '${real_start}'" ;;
+esac
+real_state="$(independent_stat_field /proc/self/stat 3)"
+[ -n "$real_state" ] || fail "real /proc/self/stat field3 (state) missing"
+fake_start="$(independent_stat_field "${PROC_ROOT}/100/stat" 22)"
+assert_eq "1000" "$fake_start" "fake field22 is the supplied starttime"
+fake_pid="$(independent_stat_field "${PROC_ROOT}/100/stat" 1)"
+assert_eq "100" "$fake_pid" "fake field1 is pid"
+pass "Linux self field22 numeric; fake field22=1000 at same slot"
+rm -rf "$CASE_DIR"
+
 echo "=== test 16: PID replacement does not inherit stability ==="
 setup_case
 write_mt5_proc "$PROC_ROOT" 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
@@ -556,25 +646,42 @@ wine_probe_forbidden
 pass "B: PID replacement resets stability"
 rm -rf "$CASE_DIR"
 
-echo "=== test 17: same PID new starttime resets identity ==="
+echo "=== test 17: same PID new starttime resets identity (discriminant) ==="
 setup_case
 write_mt5_proc "$PROC_ROOT" 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+assert_eq "1000" "$(independent_stat_field "${PROC_ROOT}/100/stat" 22)" "preflight field22=1000"
+assert_eq "100:1000" "$(call_bridge_identity 100)" "preflight identity 100:1000"
 BRIDGE_WAIT_SECONDS=30
-BRIDGE_MT5_PROCESS_STABLE_SECONDS=3
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=4
 BRIDGE_PROCESS_POLL_SECONDS=1
 run_bridge_bg
 wait_for_log "${CASE_DIR}/wrapper.log" "candidate_pid=100" || fail "initial identity"
-sleep 1.2
+t0="$(date +%s)"
+changed1="$(grep -c 'candidate_identity_changed=1' "${CASE_DIR}/wrapper.log" || true)"
+[ "${changed1:-0}" -ge 1 ] || fail "first candidate_identity_changed missing"
+sleep 2
 write_mt5_proc "$PROC_ROOT" 100 2000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
-sleep 1.2
-assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "new starttime must not inherit old stable_for"
+assert_eq "2000" "$(independent_stat_field "${PROC_ROOT}/100/stat" 22)" "rewritten field22=2000"
+assert_eq "100:2000" "$(call_bridge_identity 100)" "rewritten identity 100:2000"
+wait_for_log_count "${CASE_DIR}/wrapper.log" "candidate_identity_changed=1" 2 || \
+    fail "second candidate_identity_changed missing after starttime rewrite"
+wait_for_log_count "${CASE_DIR}/wrapper.log" "candidate_pid=100" 2 || \
+    fail "PID100 must be re-selected as a new identity"
+now="$(date +%s)"
+remain=$((t0 + 5 - now))
+if [ "$remain" -gt 0 ]; then
+    sleep "$remain"
+fi
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "no launch at old inherited deadline (~4s)"
 set +e
 wait "$WRAPPER_PID"
 STATUS=$?
 set -e
 assert_eq "42" "$STATUS" "reused PID starts after new window"
 assert_eq "1" "$(cat "${CASE_DIR}/bridge_count")" "one server after starttime reset"
-pass "C: same PID new starttime resets stability"
+changed2="$(grep -c 'candidate_identity_changed=1' "${CASE_DIR}/wrapper.log" || true)"
+[ "${changed2:-0}" -ge 2 ] || fail "expected >=2 identity changes, got ${changed2:-0}"
+pass "C: same PID new starttime resets; no launch at old deadline"
 rm -rf "$CASE_DIR"
 
 echo "=== test 18: verified normal + updater blocks; fresh window after updater gone ==="

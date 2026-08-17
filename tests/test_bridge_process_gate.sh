@@ -9,6 +9,8 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${IMAGE:-mt5-docker-mt5-amp:latest}"
 SCRIPT="${ROOT}/images/mt5-headless/scripts/start_bridge.sh"
+# shellcheck source=lib/proc_stat_fixture.sh
+source "${ROOT}/tests/lib/proc_stat_fixture.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -91,8 +93,7 @@ write_smoke_mt5() {
     esac
     printf 'State:\tR\n' >"${dir}/status"
     printf '%s\n' "$comm" >"${dir}/comm"
-    printf '%s (%s) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %s 0 0 0 0 0 0 0 0\n' \
-        "$pid" "$comm" "$starttime" >"${dir}/stat"
+    write_linux_proc_stat "${dir}/stat" "$pid" "$comm" S "$starttime"
     ln -sfn "/smoke/bins/${exe_base}" "${dir}/exe"
 }
 
@@ -296,6 +297,48 @@ docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' || fail "verified norma
 pass "TEMP false helper rejected; verified normal admits after window"
 docker rm -f "$NAME" >/dev/null
 rm -rf "$SMOKE"
+
+echo "=== TEMP same PID new starttime resets identity ==="
+prepare_smoke
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=4
+BRIDGE_WAIT_SECONDS=30
+start_temp_container
+READY_LINE="$(wait_bridge_up)" || fail "bridge up before starttime rewrite"
+write_smoke_mt5 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+assert_eq "1000" "$(independent_stat_field "${SMOKE}/proc/100/stat" 22)" "TEMP field22=1000"
+wait_for_container_log "candidate_pid=100" || fail "selected PID100"
+t0="$(date +%s)"
+sleep 2
+write_smoke_mt5 100 2000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+assert_eq "2000" "$(independent_stat_field "${SMOKE}/proc/100/stat" 22)" "TEMP rewritten field22=2000"
+for i in $(seq 1 40); do
+    n="$(docker logs "$NAME" 2>&1 | grep -c "candidate_identity_changed=1" || true)"
+    if [ "${n:-0}" -ge 2 ]; then
+        break
+    fi
+    sleep 0.25
+done
+n="$(docker logs "$NAME" 2>&1 | grep -c "candidate_identity_changed=1" || true)"
+[ "${n:-0}" -ge 2 ] || fail "TEMP expected second identity change, got ${n:-0}"
+now="$(date +%s)"
+remain=$((t0 + 5 - now))
+if [ "$remain" -gt 0 ]; then
+    sleep "$remain"
+fi
+if docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' 2>/dev/null; then
+    fail "server must not start at old inherited deadline"
+fi
+for i in $(seq 1 40); do
+    if docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' 2>/dev/null; then
+        break
+    fi
+    sleep 0.5
+done
+docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' || fail "server after new starttime window"
+pass "TEMP same PID new starttime: no launch at old deadline; server after new window"
+docker rm -f "$NAME" >/dev/null
+rm -rf "$SMOKE"
+unset BRIDGE_MT5_PROCESS_STABLE_SECONDS BRIDGE_WAIT_SECONDS
 
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"
