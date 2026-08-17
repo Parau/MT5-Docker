@@ -67,7 +67,33 @@ fi
 exit 97
 EOF
     : >"${SMOKE}/wine_calls"
+    mkdir -p "${SMOKE}/proc" "${SMOKE}/bins"
+    : >"${SMOKE}/bins/wine64-preloader"
+    : >"${SMOKE}/bins/bash"
     chmod +x "${SMOKE}/noop.sh" "${SMOKE}/stay.sh" "${SMOKE}/hold.sh" "${SMOKE}/bin/wine"
+}
+
+write_smoke_mt5() {
+    local pid="$1"
+    local starttime="$2"
+    local kind="$3"
+    shift 3
+    local dir="${SMOKE}/proc/${pid}"
+    mkdir -p "$dir"
+    local arg comm="main" exe_base="wine64-preloader"
+    : >"${dir}/cmdline"
+    for arg in "$@"; do
+        printf '%s\0' "$arg" >>"${dir}/cmdline"
+    done
+    case "$kind" in
+        helper_bash) comm="bash"; exe_base="bash" ;;
+        updater) comm="main"; exe_base="wine64-preloader" ;;
+    esac
+    printf 'State:\tR\n' >"${dir}/status"
+    printf '%s\n' "$comm" >"${dir}/comm"
+    printf '%s (%s) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %s 0 0 0 0 0 0 0 0\n' \
+        "$pid" "$comm" "$starttime" >"${dir}/stat"
+    ln -sfn "/smoke/bins/${exe_base}" "${dir}/exe"
 }
 
 start_temp_container() {
@@ -82,7 +108,8 @@ start_temp_container() {
       -e BRIDGE_LIFECYCLE_SCRIPT=/scripts/start_bridge.sh \
       -e BRIDGE_WAIT_SECONDS="${BRIDGE_WAIT_SECONDS:-2}" \
       -e BRIDGE_PROCESS_POLL_SECONDS=1 \
-      -e BRIDGE_MT5_PROCESS_STABLE_SECONDS=1 \
+      -e BRIDGE_MT5_PROCESS_STABLE_SECONDS="${BRIDGE_MT5_PROCESS_STABLE_SECONDS:-1}" \
+      -e BRIDGE_PROC_ROOT=/smoke/proc \
       -e PATH="/smoke/bin:/command:/opt/wine-stable/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
       -e FAKE_NAME=metatrader \
       -v "${SMOKE}:/smoke" \
@@ -96,25 +123,14 @@ start_temp_container() {
       "$IMAGE" >/dev/null
 }
 
-start_named_terminal() {
-    local kind="${1:-normal}"
-    local bin
-    if [ "$kind" = updater ]; then
-        docker exec "$NAME" bash -c 'mkdir -p /tmp/liveupdate; cp /bin/sleep /tmp/liveupdate/terminal64.exe'
-        bin=/tmp/liveupdate/terminal64.exe
-    else
-        docker exec "$NAME" bash -c 'cp /bin/sleep /tmp/terminal64.exe'
-        bin=/tmp/terminal64.exe
-    fi
-    docker exec -d "$NAME" "$bin" 3600
-    local pid="" i
-    for i in $(seq 1 20); do
-        pid="$(docker exec "$NAME" bash -c "pgrep -f '^${bin}' | head -n1" || true)"
-        if [ -n "$pid" ]; then
-            echo "$pid"
+wait_for_container_log() {
+    local pattern="$1"
+    local i
+    for i in $(seq 1 40); do
+        if docker logs "$NAME" 2>&1 | grep -q "$pattern"; then
             return 0
         fi
-        sleep 0.1
+        sleep 0.25
     done
     return 1
 }
@@ -183,12 +199,7 @@ sleep 1
 if docker exec "$NAME" bash -lc 'grep -q "mt5_bridge.py" /smoke/wine_calls 2>/dev/null'; then
     fail "wine before terminal appear"
 fi
-NAMED_PID="$(start_named_terminal)"
-[ -n "$NAMED_PID" ] || fail "named terminal pid missing"
-docker exec "$NAME" bash -c "kill -0 ${NAMED_PID}" || fail "named terminal not alive"
-CMDLINE="$(docker exec "$NAME" bash -c "tr '\\0' ' ' < /proc/${NAMED_PID}/cmdline")"
-echo "$CMDLINE" | grep -qi 'terminal64.exe' || fail "named cmdline missing terminal64.exe: ${CMDLINE}"
-# Fake normal terminal is now visible in /proc; give the gate time to stabilize.
+write_smoke_mt5 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
 for i in $(seq 1 20); do
     if docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' 2>/dev/null; then
         break
@@ -204,32 +215,87 @@ pass "TEMP terminal appears: stable then server; same wrapper; no probe"
 docker rm -f "$NAME" >/dev/null
 rm -rf "$SMOKE"
 
-echo "=== TEMP updater then normal relaunch ==="
+echo "=== TEMP identity change before window completes ==="
 prepare_smoke
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=3
+BRIDGE_WAIT_SECONDS=30
 start_temp_container
-READY_LINE="$(wait_bridge_up)" || fail "bridge up before updater"
-UPDATER_PID="$(start_named_terminal updater)"
-[ -n "$UPDATER_PID" ] || fail "updater pid missing"
-docker exec "$NAME" bash -c "kill -0 ${UPDATER_PID}" || fail "updater not alive"
-UCMD="$(docker exec "$NAME" bash -c "tr '\\0' ' ' < /proc/${UPDATER_PID}/cmdline")"
-echo "$UCMD" | grep -qi 'terminal64.exe' || fail "updater cmdline missing terminal64.exe: ${UCMD}"
-echo "$UCMD" | grep -qi 'liveupdate' || fail "updater cmdline missing liveupdate: ${UCMD}"
-sleep 2
-if docker exec "$NAME" bash -c 'grep -q "mt5_bridge.py" /smoke/wine_calls 2>/dev/null'; then
-    fail "updater-only must not start server"
+READY_LINE="$(wait_bridge_up)" || fail "bridge up before identity change"
+write_smoke_mt5 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+wait_for_container_log "candidate_pid=100" || fail "selected PID100"
+sleep 0.8
+rm -rf "${SMOKE}/proc/100"
+write_smoke_mt5 200 2000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+wait_for_container_log "candidate_pid=200" || fail "identity reset to PID200"
+sleep 1.2
+if docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' 2>/dev/null; then
+    fail "server must not start on inherited stability"
 fi
-docker exec "$NAME" bash -lc "kill -TERM ${UPDATER_PID} 2>/dev/null || true"
-start_named_terminal >/dev/null
 for i in $(seq 1 20); do
     if docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' 2>/dev/null; then
         break
     fi
     sleep 0.5
 done
-docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' || fail "server did not start after normal relaunch"
-WINE_CALLS="$(docker exec "$NAME" bash -c 'cat /smoke/wine_calls' 2>/dev/null || true)"
-echo "$WINE_CALLS" | grep -Fq 'python mt5_bridge.py' || fail "relaunch must start server"
-pass "TEMP updater rejected then normal relaunch starts server"
+docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' || fail "server after PID200 window"
+docker logs "$NAME" 2>&1 | grep -q "candidate_identity_changed=1" || fail "identity change logged"
+pass "TEMP identity change: reset; server only after new window"
+docker rm -f "$NAME" >/dev/null
+rm -rf "$SMOKE"
+unset BRIDGE_MT5_PROCESS_STABLE_SECONDS BRIDGE_WAIT_SECONDS
+
+echo "=== TEMP verified normal + updater then relaunch ==="
+prepare_smoke
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=2
+BRIDGE_WAIT_SECONDS=30
+start_temp_container
+READY_LINE="$(wait_bridge_up)" || fail "bridge up before updater"
+write_smoke_mt5 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+write_smoke_mt5 200 1000 updater "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/update"
+wait_for_container_log "reason=updater_active" || fail "updater blocks"
+sleep 2.2
+if docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' 2>/dev/null; then
+    fail "normal+updater must not start server"
+fi
+rm -rf "${SMOKE}/proc/200"
+sleep 1.0
+if docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' 2>/dev/null; then
+    fail "must not reuse time from before updater removal"
+fi
+for i in $(seq 1 20); do
+    if docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' 2>/dev/null; then
+        break
+    fi
+    sleep 0.5
+done
+docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' || fail "server after fresh window"
+pass "TEMP updater coexistence blocked; fresh window after removal"
+docker rm -f "$NAME" >/dev/null
+rm -rf "$SMOKE"
+unset BRIDGE_MT5_PROCESS_STABLE_SECONDS BRIDGE_WAIT_SECONDS
+
+echo "=== TEMP false bash helper then verified normal ==="
+prepare_smoke
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=1
+BRIDGE_WAIT_SECONDS=30
+start_temp_container
+READY_LINE="$(wait_bridge_up)" || fail "bridge up before helper"
+write_smoke_mt5 300 1000 helper_bash "bash" "-c" "terminal64.exe /portable"
+sleep 2.2
+if docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' 2>/dev/null; then
+    fail "bash helper must not start server"
+fi
+write_smoke_mt5 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+for i in $(seq 1 20); do
+    if docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' 2>/dev/null; then
+        break
+    fi
+    sleep 0.5
+done
+docker exec "$NAME" bash -lc 'test -s /smoke/server.pid' || fail "verified normal must start server"
+pass "TEMP false helper rejected; verified normal admits after window"
+docker rm -f "$NAME" >/dev/null
+rm -rf "$SMOKE"
 
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"

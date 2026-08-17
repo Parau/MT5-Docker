@@ -150,7 +150,7 @@ Crash-loop budget counts **process deaths**, not Docker health failures. After e
 |----------|---------|---------|
 | `VNC_PASSWORD` | *(required in .env)* | TigerVNC password |
 | `RUN_MT5` / `RUN_BRIDGE` | `1` / `1` | Stage2 gate for longruns |
-| `BRIDGE_WAIT_SECONDS` | `180` | Warning interval while waiting for a stable normal terminal |
+| `BRIDGE_WAIT_SECONDS` | `180` | Warning interval while waiting for the same verified MT5 identity |
 | `BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS` | `60` | Crash-loop window |
 | `BRIDGE_FAILURE_BUDGET_DEATHS` | `5` | Crash-loop death threshold |
 | `NT5_SERVICE_ENABLED` | `0` | Keep `0` until whitelist is done |

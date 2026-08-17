@@ -319,17 +319,24 @@ echo "$SB_BODY" | grep -Eq 'MetaTrader5|mt5\.initialize|terminal_info|mt5\.shutd
 grep -Eq 'MetaTrader5|mt5\.initialize|terminal_info|mt5\.shutdown' "$START_BRIDGE" && \
   fail "start_bridge file must not mention MT5 Python API"
 echo "$SB_BODY" | grep -Fq 'wine python -' && fail "start_bridge must not probe with wine python -"
-echo "$SB_BODY" | grep -Fq 'scan_normal_mt5_processes' || fail "passive process scan missing"
+echo "$SB_BODY" | grep -Fq 'scan_mt5_processes' || fail "passive process scan missing"
+echo "$SB_BODY" | grep -Fq 'bridge_process_identity' || fail "stable identity missing"
+echo "$SB_BODY" | grep -Fq 'bridge_is_verified_mt5_process' || fail "verified process predicate missing"
+echo "$SB_BODY" | grep -Fq 'reason=updater_active' || fail "updater must block admission"
+echo "$SB_BODY" | grep -Fq '/proc/*/environ' && fail "must not read environ"
+echo "$SB_BODY" | grep -Fq 'eval ' && fail "must not eval nullglob restore"
 echo "$SB_BODY" | grep -Fq 'WAITING_FOR_MT5_PROCESS' || fail "waiting state missing"
 echo "$SB_BODY" | grep -Fq 'continue_waiting' || fail "warning continue_waiting missing"
 echo "$SB_BODY" | grep -Fq 'wine python mt5_bridge.py' || fail "server spawn missing"
-grep -Fq 'passive local terminal-process gate' "$ARCH_DOC" || fail "arch doc process gate"
+grep -Fq 'same verified normal MT5' "$ARCH_DOC" || fail "arch doc identity wording"
+grep -Fq 'process identity' "$ARCH_DOC" || fail "arch doc identity token"
+grep -Fq 'shell/python helpers' "$ARCH_DOC" || fail "arch doc helper rejection"
 grep -Fq 'does not provide a guarantee beyond' "$ARCH_DOC" || fail "arch doc residual initialize limitation"
 grep -Fq 'root.health()' "$HEALTH" || fail "health remains root.health()"
 if find "$S6_ROOT" \( -name notification-fd -o -name timeout-up -o -path '*/data/check' \) | grep -q .; then
     fail "native readiness artifacts present"
 fi
-TESTS_RUN=$((TESTS_RUN + 11))
+TESTS_RUN=$((TESTS_RUN + 17))
 pass "start_bridge process gate; docs updated; health/readiness frozen"
 
 echo "=== summary ==="

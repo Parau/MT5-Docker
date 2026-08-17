@@ -92,10 +92,13 @@ ten services. No `mt5-ready` / watchdog services.
 ## G. Bridge lifecycle
 
 - Owned by `bridge` + `scripts/start_bridge.sh`.
-- Startup uses a **passive local terminal-process gate** (`/proc` cmdline scan
-  for a stable normal `terminal64.exe`). Updater/LiveUpdate does not admit the
-  server. The real `mt5_bridge.py` process performs the only startup
-  `initialize()`.
+- Startup uses a **passive local /proc gate**: the same verified normal MT5
+  process identity (`PID` + `/proc/<pid>/stat` starttime) must remain valid
+  for the full stability window, with **no verified updater** active. Process
+  verification uses local `/proc` metadata (Wine loader exe basename);
+  shell/python helpers that only mention `terminal64.exe` are rejected.
+  Updater/LiveUpdate does not admit the server. The real `mt5_bridge.py`
+  process performs the only startup `initialize()`.
 - `BRIDGE_WAIT_SECONDS` is a warning/observability interval during that wait;
   the wrapper keeps waiting and does not launch without a normal terminal.
 - On death: `bridge/finish` captures `wantedup`, quiesces old PGID, then
@@ -167,8 +170,10 @@ Host binds for VNC and RPyC are `127.0.0.1`.
 
 ## N. Known deliberate limitations
 
-1. `start_bridge.sh` uses a passive local terminal-process gate; the real
-   bridge process performs the only startup `initialize()`.
+1. `start_bridge.sh` uses a passive local terminal-process gate: the same
+   verified normal MT5 process identity remains valid for the stability
+   window, with no verified updater active. The real bridge process performs
+   the only startup `initialize()`.
 2. MetaQuotes documents that `initialize()` may launch a terminal if required;
    the gate reduces ownership ambiguity but does not provide a guarantee beyond
    the official API.

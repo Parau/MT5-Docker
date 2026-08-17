@@ -41,10 +41,30 @@ executable_body() {
     awk 'NR==1{next} /^#/{next} {print}' "$1"
 }
 
-write_proc_cmdline() {
+ensure_proc_bins() {
+    mkdir -p "${CASE_DIR}/bins"
+    : >"${CASE_DIR}/bins/wine64-preloader"
+    : >"${CASE_DIR}/bins/bash"
+    : >"${CASE_DIR}/bins/python3"
+}
+
+write_proc_stat() {
+    local dir="$1"
+    local pid="$2"
+    local comm="$3"
+    local starttime="$4"
+    local state="${5:-S}"
+    printf '%s (%s) %s 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %s 0 0 0 0 0 0 0 0\n' \
+        "$pid" "$comm" "$state" "$starttime" >"${dir}/stat"
+}
+
+# kind: normal|updater|helper_bash|helper_python|unreadable|zombie|broken_exe
+write_mt5_proc() {
     local proc_root="$1"
     local pid="$2"
-    shift 2
+    local starttime="$3"
+    local kind="$4"
+    shift 4
     local dir="${proc_root}/${pid}"
     mkdir -p "$dir"
     local arg
@@ -52,7 +72,38 @@ write_proc_cmdline() {
     for arg in "$@"; do
         printf '%s\0' "$arg" >>"${dir}/cmdline"
     done
-    printf 'State:\tR\n' >"${dir}/status"
+    local comm="main"
+    local exe_base="wine64-preloader"
+    local state="S"
+    case "$kind" in
+        helper_bash) comm="bash"; exe_base="bash" ;;
+        helper_python) comm="python3"; exe_base="python3" ;;
+        zombie) state="Z" ;;
+        unreadable) exe_base="" ;;
+        broken_exe) exe_base="missing" ;;
+    esac
+    if [ "$state" = "Z" ]; then
+        printf 'State:\tZ\n' >"${dir}/status"
+    else
+        printf 'State:\tR\n' >"${dir}/status"
+    fi
+    printf '%s\n' "$comm" >"${dir}/comm"
+    write_proc_stat "$dir" "$pid" "$comm" "$starttime" "$state"
+    rm -f "${dir}/exe"
+    if [ "$kind" = "unreadable" ]; then
+        :
+    elif [ "$kind" = "broken_exe" ]; then
+        ln -sfn "${CASE_DIR}/bins/missing" "${dir}/exe"
+    else
+        ln -sfn "${CASE_DIR}/bins/${exe_base}" "${dir}/exe"
+    fi
+}
+
+write_proc_cmdline() {
+    local proc_root="$1"
+    local pid="$2"
+    shift 2
+    write_mt5_proc "$proc_root" "$pid" 1000 normal "$@"
 }
 
 setup_case() {
@@ -61,6 +112,7 @@ setup_case() {
     BRIDGE_DIR="${CASE_DIR}/bridge"
     PROC_ROOT="${CASE_DIR}/proc"
     mkdir -p "$FAKE_BIN" "$BRIDGE_DIR" "$PROC_ROOT"
+    ensure_proc_bins
 
     cat >"${FAKE_BIN}/wine" <<'EOF'
 #!/bin/bash
@@ -479,7 +531,228 @@ echo "$OUTPUT" | grep -q "wait_seconds=180" || fail "fallback wait_seconds=180"
 pass "invalid BRIDGE_WAIT_SECONDS warns and falls back to 180"
 rm -rf "$CASE_DIR"
 
-echo "=== test 16: static safety ==="
+echo "=== test 16: PID replacement does not inherit stability ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+BRIDGE_WAIT_SECONDS=30
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=3
+BRIDGE_PROCESS_POLL_SECONDS=1
+run_bridge_bg
+wait_for_log "${CASE_DIR}/wrapper.log" "candidate_pid=100" || fail "chose PID100"
+sleep 1.2
+rm -rf "${PROC_ROOT}/100"
+write_mt5_proc "$PROC_ROOT" 200 2000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+wait_for_log "${CASE_DIR}/wrapper.log" "candidate_pid=200" || fail "switched to PID200"
+sleep 1.2
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "PID200 must not inherit PID100 stable_for"
+grep -q "candidate_identity_changed=1" "${CASE_DIR}/wrapper.log" || fail "identity change logged"
+set +e
+wait "$WRAPPER_PID"
+STATUS=$?
+set -e
+assert_eq "42" "$STATUS" "PID200 eventually starts after own window"
+assert_eq "1" "$(cat "${CASE_DIR}/bridge_count")" "one server after PID200 window"
+wine_probe_forbidden
+pass "B: PID replacement resets stability"
+rm -rf "$CASE_DIR"
+
+echo "=== test 17: same PID new starttime resets identity ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+BRIDGE_WAIT_SECONDS=30
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=3
+BRIDGE_PROCESS_POLL_SECONDS=1
+run_bridge_bg
+wait_for_log "${CASE_DIR}/wrapper.log" "candidate_pid=100" || fail "initial identity"
+sleep 1.2
+write_mt5_proc "$PROC_ROOT" 100 2000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+sleep 1.2
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "new starttime must not inherit old stable_for"
+set +e
+wait "$WRAPPER_PID"
+STATUS=$?
+set -e
+assert_eq "42" "$STATUS" "reused PID starts after new window"
+assert_eq "1" "$(cat "${CASE_DIR}/bridge_count")" "one server after starttime reset"
+pass "C: same PID new starttime resets stability"
+rm -rf "$CASE_DIR"
+
+echo "=== test 18: verified normal + updater blocks; fresh window after updater gone ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+write_mt5_proc "$PROC_ROOT" 200 1000 updater "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/update"
+BRIDGE_WAIT_SECONDS=30
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=2
+BRIDGE_PROCESS_POLL_SECONDS=1
+run_bridge_bg
+wait_for_log "${CASE_DIR}/wrapper.log" "reason=updater_active" || fail "updater blocks"
+sleep 2.2
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "coexistence must not launch"
+rm -rf "${PROC_ROOT}/200"
+sleep 1.2
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "must not reuse pre-updater time"
+set +e
+wait "$WRAPPER_PID"
+STATUS=$?
+set -e
+assert_eq "42" "$STATUS" "fresh window after updater removed"
+assert_eq "1" "$(cat "${CASE_DIR}/bridge_count")" "server after new window"
+grep -q "updater_count=1" "${CASE_DIR}/wrapper.log" || fail "updater_count logged"
+pass "D/E: updater coexistence blocks; removal starts new window"
+rm -rf "$CASE_DIR"
+
+echo "=== test 19: bash helper mentioning terminal64.exe is rejected ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 300 1000 helper_bash "bash" "-c" "terminal64.exe /portable"
+BRIDGE_WAIT_SECONDS=30
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=1
+run_bridge_bg
+wait_for_log "${CASE_DIR}/wrapper.log" "state=WAITING_FOR_MT5_PROCESS" || fail "waiting"
+sleep 2.2
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "bash helper must not admit"
+kill -TERM "$WRAPPER_PID"
+wait "$WRAPPER_PID" 2>/dev/null || true
+wine_probe_forbidden
+pass "F: bash false candidate rejected"
+rm -rf "$CASE_DIR"
+
+echo "=== test 20: python helper mentioning terminal64.exe is rejected ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 301 1000 helper_python "python3" "-c" "terminal64.exe /portable"
+BRIDGE_WAIT_SECONDS=30
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=1
+run_bridge_bg
+wait_for_log "${CASE_DIR}/wrapper.log" "state=WAITING_FOR_MT5_PROCESS" || fail "waiting"
+sleep 2.2
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "python helper must not admit"
+kill -TERM "$WRAPPER_PID"
+wait "$WRAPPER_PID" 2>/dev/null || true
+wine_probe_forbidden
+pass "G: python false candidate rejected"
+rm -rf "$CASE_DIR"
+
+echo "=== test 21: multiple normals keep smallest PID; disappearance switches ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+write_mt5_proc "$PROC_ROOT" 200 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+BRIDGE_WAIT_SECONDS=30
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=2
+BRIDGE_PROCESS_POLL_SECONDS=1
+run_bridge_bg
+wait_for_log "${CASE_DIR}/wrapper.log" "candidate_pid=100" || fail "deterministic smallest PID"
+sleep 0.4
+rm -rf "${PROC_ROOT}/200"
+sleep 0.8
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "removing extra candidate must not reset PID100"
+# Let PID100 finish its original window.
+set +e
+wait "$WRAPPER_PID"
+STATUS=$?
+set -e
+assert_eq "42" "$STATUS" "PID100 completes original window"
+assert_eq "1" "$(cat "${CASE_DIR}/bridge_count")" "one server"
+echo "$(grep candidate_pid= "${CASE_DIR}/wrapper.log" || true)" | grep -q "candidate_pid=200" && \
+  fail "must not switch to PID200 while PID100 remains"
+pass "H: multiple normals stay on smallest PID"
+rm -rf "$CASE_DIR"
+
+echo "=== test 22: chosen normal disappearance starts new window on remaining ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+write_mt5_proc "$PROC_ROOT" 200 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+BRIDGE_WAIT_SECONDS=30
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=2
+BRIDGE_PROCESS_POLL_SECONDS=1
+run_bridge_bg
+wait_for_log "${CASE_DIR}/wrapper.log" "candidate_pid=100" || fail "chose 100"
+sleep 0.4
+rm -rf "${PROC_ROOT}/100"
+wait_for_log "${CASE_DIR}/wrapper.log" "candidate_pid=200" || fail "switched to 200"
+sleep 0.8
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "PID200 needs a full new window"
+set +e
+wait "$WRAPPER_PID"
+STATUS=$?
+set -e
+assert_eq "42" "$STATUS" "PID200 after new window"
+pass "I: chosen process disappearance resets to remaining identity"
+rm -rf "$CASE_DIR"
+
+echo "=== test 23: zombie looking like terminal is ignored ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 400 1000 zombie "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+BRIDGE_WAIT_SECONDS=30
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=1
+run_bridge_bg
+wait_for_log "${CASE_DIR}/wrapper.log" "state=WAITING_FOR_MT5_PROCESS" || fail "waiting"
+sleep 2.2
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "zombie must not admit"
+kill -TERM "$WRAPPER_PID"
+wait "$WRAPPER_PID" 2>/dev/null || true
+wine_probe_forbidden
+pass "J: zombie rejected"
+rm -rf "$CASE_DIR"
+
+echo "=== test 24: unreadable/broken exe is not verified ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 401 1000 unreadable "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+write_mt5_proc "$PROC_ROOT" 402 1000 broken_exe "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+BRIDGE_WAIT_SECONDS=30
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=1
+run_bridge_bg
+wait_for_log "${CASE_DIR}/wrapper.log" "state=WAITING_FOR_MT5_PROCESS" || fail "waiting"
+sleep 2.2
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "unreadable exe must not admit"
+kill -TERM "$WRAPPER_PID"
+wait "$WRAPPER_PID" 2>/dev/null || true
+wine_probe_forbidden
+pass "K: unreadable/broken exe rejected"
+rm -rf "$CASE_DIR"
+
+echo "=== test 25: nullglob restored; empty proc does not abort ==="
+setup_case
+# shellcheck source=/dev/null
+BRIDGE_PROC_ROOT="$PROC_ROOT" bash -c '
+set -Eeuo pipefail
+source "$1"
+if shopt -q nullglob; then echo BEFORE=on; else echo BEFORE=off; fi
+scan_mt5_processes
+if shopt -q nullglob; then echo AFTER=on; else echo AFTER=off; fi
+echo UPDATERS=${SCAN_UPDATER_COUNT}
+echo NORMALS=${SCAN_NORMAL_COUNT}
+' _ "$SCRIPT" >"${CASE_DIR}/nullglob.off"
+grep -qx "BEFORE=off" "${CASE_DIR}/nullglob.off" || fail "nullglob starts off"
+grep -qx "AFTER=off" "${CASE_DIR}/nullglob.off" || fail "nullglob restored off"
+grep -qx "UPDATERS=0" "${CASE_DIR}/nullglob.off" || fail "empty scan updater 0"
+grep -qx "NORMALS=0" "${CASE_DIR}/nullglob.off" || fail "empty scan normal 0"
+BRIDGE_PROC_ROOT="$PROC_ROOT" bash -c '
+set -Eeuo pipefail
+source "$1"
+shopt -s nullglob
+if shopt -q nullglob; then echo BEFORE=on; else echo BEFORE=off; fi
+scan_mt5_processes
+if shopt -q nullglob; then echo AFTER=on; else echo AFTER=off; fi
+' _ "$SCRIPT" >"${CASE_DIR}/nullglob.on"
+grep -qx "BEFORE=on" "${CASE_DIR}/nullglob.on" || fail "nullglob starts on"
+grep -qx "AFTER=on" "${CASE_DIR}/nullglob.on" || fail "nullglob restored on"
+BODY="$(executable_body "$SCRIPT")"
+echo "$BODY" | grep -Fq 'eval ' && fail "must not eval nullglob restore"
+echo "$BODY" | grep -Fq 'shopt -p nullglob' && fail "must not use shopt -p"
+pass "nullglob restore explicit; empty proc scan nonfatal"
+rm -rf "$CASE_DIR"
+
+echo "=== test 26: bash helper with /update does not DoS as updater ==="
+setup_case
+write_mt5_proc "$PROC_ROOT" 100 1000 normal "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
+write_mt5_proc "$PROC_ROOT" 300 1000 helper_bash "bash" "terminal64.exe" "/update"
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=1
+run_bridge
+assert_eq "42" "$STATUS" "helper updater substring must not block verified normal"
+assert_eq "1" "$(cat "${CASE_DIR}/bridge_count")" "server starts despite helper /update"
+pass "helper /update substring is not a verified updater"
+rm -rf "$CASE_DIR"
+
+echo "=== test 27: static safety ==="
 BODY="$(executable_body "$SCRIPT")"
 echo "$BODY" | grep -Eq 's6-svc|s6-rc' && fail "no s6-svc/s6-rc"
 echo "$BODY" | grep -Fq 'notification-fd' && fail "no notification-fd"
@@ -496,7 +769,12 @@ grep -Eq 'MetaTrader5|mt5\.initialize|terminal_info|mt5\.shutdown' "$SCRIPT" && 
   fail "start_bridge file must not mention MT5 Python API"
 echo "$BODY" | grep -Fq 'wine python -' && fail "must not spawn wine python -"
 echo "$BODY" | grep -Fq 'run_readiness_probe' && fail "readiness probe helper must be gone"
-TESTS_RUN=$((TESTS_RUN + 12))
+echo "$BODY" | grep -Fq 'scan_mt5_processes' || fail "scan_mt5_processes missing"
+echo "$BODY" | grep -Fq 'bridge_process_identity' || fail "identity helper missing"
+echo "$BODY" | grep -Fq 'bridge_is_verified_mt5_process' || fail "verified predicate missing"
+echo "$BODY" | grep -Fq 'reason=updater_active' || fail "updater block missing"
+echo "$BODY" | grep -Fq 'eval ' && fail "no eval restore"
+TESTS_RUN=$((TESTS_RUN + 17))
 pass "static safety: process gate, spawn/wait, no API preflight"
 
 echo "=== summary ==="

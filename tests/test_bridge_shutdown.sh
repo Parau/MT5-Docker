@@ -43,13 +43,17 @@ write_proc_cmdline() {
     local pid="$2"
     shift 2
     local dir="${proc_root}/${pid}"
-    mkdir -p "$dir"
+    mkdir -p "$dir" "${CASE_DIR}/bins"
+    : >"${CASE_DIR}/bins/wine64-preloader"
     local arg
     : >"${dir}/cmdline"
     for arg in "$@"; do
         printf '%s\0' "$arg" >>"${dir}/cmdline"
     done
     printf 'State:\tR\n' >"${dir}/status"
+    printf 'main\n' >"${dir}/comm"
+    printf '%s (main) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1000 0 0 0 0 0 0 0 0\n' "$pid" >"${dir}/stat"
+    ln -sfn "${CASE_DIR}/bins/wine64-preloader" "${dir}/exe"
 }
 
 setup_runtime() {
