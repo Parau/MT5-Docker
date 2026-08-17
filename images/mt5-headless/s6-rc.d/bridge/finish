@@ -1,0 +1,347 @@
+#!/command/with-contenv bash
+# s6 finish: quiesce old bridge PGID, then apply crash-loop failure budget.
+#
+# Data flow: invoked when bridge/run dies. Captures wantedup first, SIGKILLs
+# only the defunct run PGID ($4), confirms quiescence, then — only if
+# wantedup=true — consults s6-permafailon against the supervise death tally.
+# Within budget → exit 0 (allow restart). Exhausted / unsafe while wanted-up →
+# write container exit 75 (unless a prior fatal exitcode exists), halt, exit 125.
+# Policy matrix (04K-C): occasional bridge death = isolated restart; rapid
+# crash-loop / unsafe cleanup while UP = BRIDGE_UNRECOVERABLE (75); Docker
+# unhealthy remains observability-only (never evaluated here).
+# Note: metatrader/finish must preserve a prior non-zero exitcode so halt
+# cascade (MT TERM→0) cannot wipe BRIDGE_UNRECOVERABLE=75.
+# Limitations: finish must finish under s6's ~5s default timeout; children that
+# escape into another process group are outside this safety net; exit0/SIGTERM/
+# SIGINT deaths are excluded from the budget event list by design.
+readonly LOG_PREFIX="[BRIDGE-FINISH]"
+
+log() {
+    echo "${LOG_PREFIX} $*"
+}
+
+run_exit="${1:-}"
+signal="${2:-}"
+servicedir="${3:-.}"
+pgid="${4:-}"
+
+BRIDGE_FINISH_QUIESCE_TIMEOUT_SECONDS="${BRIDGE_FINISH_QUIESCE_TIMEOUT_SECONDS:-2}"
+BRIDGE_FINISH_QUIESCE_POLL_SECONDS="${BRIDGE_FINISH_QUIESCE_POLL_SECONDS:-0.2}"
+
+BRIDGE_S6_SVSTAT_BIN="${BRIDGE_S6_SVSTAT_BIN:-/command/s6-svstat}"
+BRIDGE_S6_PERMAFAILON_BIN="${BRIDGE_S6_PERMAFAILON_BIN:-/command/s6-permafailon}"
+BRIDGE_HALT_BIN="${BRIDGE_HALT_BIN:-/run/s6/basedir/bin/halt}"
+BRIDGE_CONTAINER_EXITCODE_FILE="${BRIDGE_CONTAINER_EXITCODE_FILE:-/run/s6-linux-init-container-results/exitcode}"
+
+BRIDGE_FAILURE_BUDGET_WINDOW_DEFAULT=60
+BRIDGE_FAILURE_BUDGET_DEATHS_DEFAULT=5
+# Count abnormal exits/signals only — never exit0 / SIGTERM / SIGINT (admin stop).
+readonly BRIDGE_FAILURE_BUDGET_EVENTS="1-255,SIGABRT,SIGBUS,SIGFPE,SIGILL,SIGKILL,SIGPIPE,SIGQUIT,SIGSEGV,SIGSYS,SIGTRAP,SIGXCPU,SIGXFSZ"
+
+wantedup_state="unknown"
+service_stat_dir="."
+
+resolve_service_stat_dir() {
+    # s6 passes $3 as the service basename (e.g. "bridge"); cwd is the live
+    # servicedir. Prefer cwd when it has supervise/, else absolute paths.
+    if [ -d "./supervise" ]; then
+        service_stat_dir="."
+        return 0
+    fi
+    if [ -n "${servicedir}" ] && [ -d "${servicedir}/supervise" ]; then
+        service_stat_dir="${servicedir}"
+        return 0
+    fi
+    if [ -n "${servicedir}" ] && [ "${servicedir}" != "." ] && [ -d "/run/service/${servicedir}/supervise" ]; then
+        service_stat_dir="/run/service/${servicedir}"
+        return 0
+    fi
+    if [ -d "/run/service/bridge/supervise" ]; then
+        service_stat_dir="/run/service/bridge"
+        return 0
+    fi
+    service_stat_dir="."
+    return 0
+}
+
+# Robust PGID lookup: never tokenize /proc/PID/stat (comm may contain spaces/')').
+process_pgid() {
+    local pid="$1"
+    local value
+
+    value="$(ps -o pgid= -p "$pid" 2>/dev/null || true)"
+    value="$(printf '%s' "$value" | tr -d '[:space:]')"
+
+    case "$value" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+
+    printf '%s\n' "$value"
+}
+
+caller_pgid() {
+    process_pgid "$$"
+}
+
+pgid_is_valid() {
+    local candidate="${1:-}"
+    case "${candidate}" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    if [ "${candidate}" -le 1 ]; then
+        return 1
+    fi
+    return 0
+}
+
+process_group_has_live_members() {
+    local candidate="$1"
+    local pid state pgrp
+    for pid in /proc/[0-9]*; do
+        pid="${pid##*/}"
+        case "${pid}" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        pgrp="$(process_pgid "${pid}" || true)"
+        if [ -z "${pgrp}" ]; then
+            continue
+        fi
+        if [ "${pgrp}" != "${candidate}" ]; then
+            continue
+        fi
+        state="$(awk '/^State:/ { print $2; exit }' "/proc/${pid}/status" 2>/dev/null || true)"
+        if [ "${state}" = "Z" ]; then
+            continue
+        fi
+        return 0
+    done
+    return 1
+}
+
+parse_budget_window() {
+    # STDOUT must be only the numeric window — invalid-config warnings go to
+    # STDERR so command substitution cannot contaminate s6-permafailon args.
+    local raw="${BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS:-}"
+    local value="${BRIDGE_FAILURE_BUDGET_WINDOW_DEFAULT}"
+    case "${raw}" in
+        '' )
+            ;;
+        *[!0-9]* )
+            log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS value=${raw} default=${BRIDGE_FAILURE_BUDGET_WINDOW_DEFAULT}" >&2
+            ;;
+        * )
+            if [ "${raw}" -ge 1 ] && [ "${raw}" -le 86400 ]; then
+                value="${raw}"
+            else
+                log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS value=${raw} default=${BRIDGE_FAILURE_BUDGET_WINDOW_DEFAULT}" >&2
+            fi
+            ;;
+    esac
+    printf '%s\n' "${value}"
+}
+
+parse_budget_deaths() {
+    # STDOUT must be only the numeric death count — see parse_budget_window.
+    local raw="${BRIDGE_FAILURE_BUDGET_DEATHS:-}"
+    local value="${BRIDGE_FAILURE_BUDGET_DEATHS_DEFAULT}"
+    case "${raw}" in
+        '' )
+            ;;
+        *[!0-9]* )
+            log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_DEATHS value=${raw} default=${BRIDGE_FAILURE_BUDGET_DEATHS_DEFAULT}" >&2
+            ;;
+        * )
+            if [ "${raw}" -ge 2 ] && [ "${raw}" -le 100 ]; then
+                value="${raw}"
+            else
+                log "failure_budget_config_invalid key=BRIDGE_FAILURE_BUDGET_DEATHS value=${raw} default=${BRIDGE_FAILURE_BUDGET_DEATHS_DEFAULT}" >&2
+            fi
+            ;;
+    esac
+    printf '%s\n' "${value}"
+}
+
+capture_wantedup() {
+    local raw=""
+    local target=""
+    resolve_service_stat_dir
+    for target in "${service_stat_dir}" "." "/run/service/bridge"; do
+        [ -n "${target}" ] || continue
+        raw="$("${BRIDGE_S6_SVSTAT_BIN}" -o wantedup "${target}" 2>/dev/null || true)"
+        raw="$(printf '%s' "${raw}" | tr -d '[:space:]')"
+        case "${raw}" in
+            true)
+                wantedup_state="true"
+                return 0
+                ;;
+            false)
+                wantedup_state="false"
+                return 0
+                ;;
+        esac
+    done
+    wantedup_state="unknown"
+}
+
+halt_bridge_unrecoverable() {
+    local reason="$1"
+    local exitcode_file="${BRIDGE_CONTAINER_EXITCODE_FILE}"
+    local halt_bin="${BRIDGE_HALT_BIN}"
+    local existing=""
+    local container_exit=75
+    local preserved=""
+    local write_status=0
+    local halt_status=0
+
+    if [ -f "${exitcode_file}" ]; then
+        existing="$(tr -d '[:space:]' <"${exitcode_file}" 2>/dev/null || true)"
+        case "${existing}" in
+            ''|*[!0-9]*|0)
+                # Missing, garbage, or default 0 — bridge may claim exit 75.
+                ;;
+            *)
+                # Non-zero prior fatal (e.g. metatrader 42) wins.
+                preserved="${existing}"
+                container_exit="${existing}"
+                ;;
+        esac
+    fi
+
+    if [ -z "${preserved}" ]; then
+        mkdir -p "$(dirname "${exitcode_file}")" 2>/dev/null || write_status=$?
+        printf '%s\n' "75" >"${exitcode_file}" 2>/dev/null || write_status=$?
+        container_exit=75
+    fi
+
+    if [ -n "${preserved}" ]; then
+        log "run_exit=${run_exit:-none} signal=${signal:-none} pgid=${pgid:-none} action=halt reason=${reason} container_exit=${container_exit} fatal_exit_preserved=${preserved} write_status=${write_status}"
+    else
+        log "run_exit=${run_exit:-none} signal=${signal:-none} pgid=${pgid:-none} action=halt reason=${reason} container_exit=${container_exit} write_status=${write_status}"
+    fi
+
+    if [ -x "${halt_bin}" ] || [ -f "${halt_bin}" ]; then
+        "${halt_bin}" || halt_status=$?
+    else
+        halt_status=127
+    fi
+    log "halt_status=${halt_status} restart_allowed=0"
+    exit 125
+}
+
+unsafe_no_restart() {
+    local reason="$1"
+    log "run_exit=${run_exit:-none} signal=${signal:-none} servicedir=${servicedir:-none} pgid=${pgid:-none} cleanup_result=unsafe_no_restart restart_allowed=0 reason=${reason} wantedup=${wantedup_state}"
+    case "${wantedup_state}" in
+        true)
+            halt_bridge_unrecoverable "unsafe_cleanup"
+            ;;
+        *)
+            exit 125
+            ;;
+    esac
+}
+
+evaluate_failure_budget() {
+    local window deaths status
+    window="$(parse_budget_window)"
+    deaths="$(parse_budget_deaths)"
+    resolve_service_stat_dir
+
+    set +e
+    (
+        # Death tally lives in the live servicedir (usually cwd under s6).
+        if [ -d "${service_stat_dir}/supervise" ]; then
+            cd "${service_stat_dir}" || exit 127
+        elif [ -d "./supervise" ]; then
+            cd . || exit 127
+        elif [ -d "${servicedir}/supervise" ]; then
+            cd "${servicedir}" || exit 127
+        fi
+        "${BRIDGE_S6_PERMAFAILON_BIN}" \
+            "${window}" \
+            "${deaths}" \
+            "${BRIDGE_FAILURE_BUDGET_EVENTS}" \
+            /bin/true
+    )
+    status=$?
+    set -e
+
+    case "${status}" in
+        0)
+            log "run_exit=${run_exit:-none} signal=${signal:-none} pgid=${pgid} cleanup_result=quiescent failure_budget=within_budget window=${window} deaths=${deaths} restart_allowed=1 wantedup=true"
+            exit 0
+            ;;
+        125)
+            log "run_exit=${run_exit:-none} signal=${signal:-none} pgid=${pgid} cleanup_result=quiescent failure_budget=exhausted window=${window} deaths=${deaths} restart_allowed=0 wantedup=true"
+            halt_bridge_unrecoverable "rapid_crash_loop"
+            ;;
+        *)
+            log "run_exit=${run_exit:-none} signal=${signal:-none} pgid=${pgid} cleanup_result=quiescent failure_budget=check_error status=${status} restart_allowed=1 wantedup=true"
+            exit 0
+            ;;
+    esac
+}
+
+# --- main ---
+capture_wantedup
+
+if ! pgid_is_valid "${pgid}"; then
+    unsafe_no_restart "invalid_pgid"
+fi
+
+self_pgid="$(caller_pgid)"
+case "${self_pgid}" in
+    ''|*[!0-9]*)
+        unsafe_no_restart "self_pgid_unreadable"
+        ;;
+esac
+# In containers the finish helper may itself live in PGID 1; still refuse only
+# when the cleanup target equals the finish process group.
+if [ "${pgid}" -eq "${self_pgid}" ]; then
+    unsafe_no_restart "pgid_matches_finish"
+fi
+
+# Deliberate exception to 04I-B: after graceful TERM already finished (or run
+# died), hard-kill only the old bridge session/group before restart.
+kill -KILL -- "-${pgid}" 2>/dev/null || true
+
+# Bash arithmetic truncates floats; poll with sleep and a simple counter budget.
+poll_iters=$((BRIDGE_FINISH_QUIESCE_TIMEOUT_SECONDS * 5))
+i=0
+while [ "${i}" -lt "${poll_iters}" ]; do
+    if ! process_group_has_live_members "${pgid}"; then
+        case "${wantedup_state}" in
+            true)
+                evaluate_failure_budget
+                ;;
+            false)
+                log "run_exit=${run_exit:-none} signal=${signal:-none} pgid=${pgid} cleanup_result=quiescent failure_budget=skipped reason=wantedup_false restart_allowed=0 wantedup=false"
+                exit 0
+                ;;
+            *)
+                log "run_exit=${run_exit:-none} signal=${signal:-none} pgid=${pgid} cleanup_result=quiescent failure_budget=skipped reason=wantedup_unreadable restart_allowed=1 wantedup=unknown"
+                exit 0
+                ;;
+        esac
+    fi
+    sleep "${BRIDGE_FINISH_QUIESCE_POLL_SECONDS}" || true
+    i=$((i + 1))
+done
+
+if process_group_has_live_members "${pgid}"; then
+    unsafe_no_restart "group_still_alive"
+fi
+
+case "${wantedup_state}" in
+    true)
+        evaluate_failure_budget
+        ;;
+    false)
+        log "run_exit=${run_exit:-none} signal=${signal:-none} pgid=${pgid} cleanup_result=quiescent failure_budget=skipped reason=wantedup_false restart_allowed=0 wantedup=false"
+        exit 0
+        ;;
+    *)
+        log "run_exit=${run_exit:-none} signal=${signal:-none} pgid=${pgid} cleanup_result=quiescent failure_budget=skipped reason=wantedup_unreadable restart_allowed=1 wantedup=unknown"
+        exit 0
+        ;;
+esac

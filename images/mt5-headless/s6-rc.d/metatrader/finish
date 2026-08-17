@@ -1,0 +1,59 @@
+#!/command/with-contenv bash
+# s6 finish: propagate lifecycle exit to the container and prevent supervise restart.
+#
+# Data flow: invoked when metatrader/run dies; writes s6-linux-init exitcode, requests
+# halt, then exits 125 (permanent failure). Does not signal Wine/MT5/bridge.
+# Limitations: numeric passthrough only (no 70-74 interpretation); write/halt failures
+# must still end in 125 so s6-supervise never restarts the lifecycle.
+readonly LOG_PREFIX="[METATRADER-FINISH]"
+
+log() {
+    echo "${LOG_PREFIX} $*"
+}
+
+run_exit="${1:-0}"
+signal="${2:-0}"
+
+if [ "$run_exit" = "256" ]; then
+    container_exit=$((128 + signal))
+else
+    container_exit="$run_exit"
+fi
+
+EXITCODE_FILE="${METATRADER_EXITCODE_FILE:-/run/s6-linux-init-container-results/exitcode}"
+HALT_BIN="${METATRADER_HALT_BIN:-/run/s6/basedir/bin/halt}"
+
+write_status=0
+exitcode_dir="$(dirname "$EXITCODE_FILE")"
+mkdir -p "$exitcode_dir" 2>/dev/null || write_status=$?
+
+# Preserve a prior non-zero fatal (e.g. bridge BRIDGE_UNRECOVERABLE=75) so a
+# clean metatrader TERM during halt cascade does not wipe it to 0.
+preserved=""
+if [ -f "$EXITCODE_FILE" ]; then
+    existing="$(tr -d '[:space:]' <"$EXITCODE_FILE" 2>/dev/null || true)"
+    case "$existing" in
+        ''|*[!0-9]*|0) ;;
+        *)
+            preserved="$existing"
+            container_exit="$existing"
+            ;;
+    esac
+fi
+
+if [ -z "$preserved" ]; then
+    printf '%s\n' "$container_exit" >"$EXITCODE_FILE" 2>/dev/null || write_status=$?
+else
+    log "fatal_exit_preserved=${preserved} (skip overwrite of prior non-zero exitcode)"
+fi
+
+halt_status=0
+if [ -x "$HALT_BIN" ] || [ -f "$HALT_BIN" ]; then
+    "$HALT_BIN" || halt_status=$?
+else
+    halt_status=127
+fi
+
+log "run_exit=${run_exit} signal=${signal} container_exit=${container_exit} action=halt no_restart=1 write_status=${write_status} halt_status=${halt_status}"
+
+exit 125

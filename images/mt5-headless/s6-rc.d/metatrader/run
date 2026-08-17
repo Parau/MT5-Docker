@@ -1,0 +1,25 @@
+#!/command/with-contenv bash
+# s6 longrun: exec the MT5 lifecycle as the container's principal supervised process.
+#
+# Data flow: depends on python-bootstrap; s6-supervise owns this process via exec.
+# CMD no longer starts or waits the lifecycle. Input from container env via with-contenv.
+# Limitations: no MT5_EXE validation here (raw lifecycle is fatal authority); no
+# background; no readiness/notification-fd; RUN_MT5!=1 skips with exit 0 (finish halt).
+set -Eeuo pipefail
+
+readonly LOG_PREFIX="[METATRADER-RUN]"
+
+log() {
+    echo "${LOG_PREFIX} $*"
+}
+
+RUN_MT5="${RUN_MT5:-1}"
+MT5_LIFECYCLE_SCRIPT="${MT5_LIFECYCLE_SCRIPT:-/scripts/mt5_lifecycle.sh}"
+
+if [ "$RUN_MT5" != "1" ]; then
+    log "state=SKIPPED reason=run_mt5_disabled"
+    exit 0
+fi
+
+log "state=EXEC lifecycle=${MT5_LIFECYCLE_SCRIPT}"
+exec "$MT5_LIFECYCLE_SCRIPT"

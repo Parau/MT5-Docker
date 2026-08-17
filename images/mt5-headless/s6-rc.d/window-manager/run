@@ -1,0 +1,50 @@
+#!/command/with-contenv bash
+# s6 longrun: own Openbox window manager after display is responsive.
+#
+# Data flow: depends on display longrun; polls xdpyinfo before exec openbox.
+# Input from container env via with-contenv; daemon exec uses minimal sanitized environment.
+# Limitations: this service does not own VNC access, Wine bootstrap, MT5, or bridge;
+# each of those is managed by its dedicated s6 service.
+set -Eeuo pipefail
+
+readonly LOG_PREFIX="[WINDOW-MANAGER]"
+
+log() {
+    echo "${LOG_PREFIX} $*"
+}
+
+DISPLAY="${DISPLAY:-:99}"
+XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/runtime-root}"
+WINDOW_MANAGER_DISPLAY_TIMEOUT_SECONDS="${WINDOW_MANAGER_DISPLAY_TIMEOUT_SECONDS:-30}"
+
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+
+log "state=WAITING_DISPLAY display=${DISPLAY}"
+
+display_ready=0
+for _attempt in $(seq 1 "$WINDOW_MANAGER_DISPLAY_TIMEOUT_SECONDS"); do
+    if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+        display_ready=1
+        break
+    fi
+    sleep 1
+done
+
+if [ "$display_ready" -ne 1 ]; then
+    log "state=FAILED reason=display_not_ready"
+    exit 1
+fi
+
+log "state=DISPLAY_READY"
+log "state=STARTING_OPENBOX"
+
+exec env -i \
+    PATH="${PATH}" \
+    HOME="${HOME:-/root}" \
+    USER="${USER:-root}" \
+    LOGNAME="${LOGNAME:-root}" \
+    DISPLAY="${DISPLAY}" \
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
+    openbox \
+    >/tmp/openbox.log 2>&1

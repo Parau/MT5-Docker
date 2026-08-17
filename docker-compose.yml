@@ -22,6 +22,8 @@ x-mt5-common: &mt5-common
     BOOTSTRAP_PYTHON: ${BOOTSTRAP_PYTHON:-1}
     RUN_BRIDGE: ${RUN_BRIDGE:-1}
     BRIDGE_WAIT_SECONDS: ${BRIDGE_WAIT_SECONDS:-180}
+    BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS: ${BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS:-60}
+    BRIDGE_FAILURE_BUDGET_DEATHS: ${BRIDGE_FAILURE_BUDGET_DEATHS:-5}
     NT5_SERVICE_ENABLED: ${NT5_SERVICE_ENABLED:-0}
   stop_grace_period: 30s
   restart: "no"
@@ -58,13 +60,33 @@ services:
       MT5_SERVER: ${MT5_SERVER_XP:-XPMT5-DEMO}
       RPYC_PORT: ${RPYC_PORT_XP:-18813}
       NT5_WS_URL: ${NT5_WS_URL_XP:-ws://host.docker.internal:8766/mt5-feed}
-      NT5_WS_SYMBOLS: ${NT5_WS_SYMBOLS_XP:-WDON26}
+      NT5_WS_SYMBOLS: ${NT5_WS_SYMBOLS_XP:-WDOQ26}
     volumes:
       - mt5_xp_data:/config/.wine
     ports:
       - "127.0.0.1:5902:5900"
       - "127.0.0.1:${RPYC_PORT_XP:-18813}:${RPYC_PORT_XP:-18813}"
 
+  mt5-amp:
+    <<: *mt5-common
+    profiles:
+      - amp
+    container_name: mt5_amp_container
+    environment:
+      <<: *mt5-env
+      MT5_LOGIN: ${MT5_LOGIN_AMP:-}
+      MT5_PASSWORD: ${MT5_PASSWORD_AMP:-}
+      MT5_SERVER: ${MT5_SERVER_AMP:-AMPGlobalUSA-Demo}
+      RPYC_PORT: ${RPYC_PORT_AMP:-18814}
+      NT5_WS_URL: ${NT5_WS_URL_AMP:-ws://host.docker.internal:8767/mt5-feed}
+      NT5_WS_SYMBOLS: ${NT5_WS_SYMBOLS_AMP:-ENQU26}
+    volumes:
+      - mt5_amp_data:/config/.wine
+    ports:
+      - "127.0.0.1:5903:5900"
+      - "127.0.0.1:${RPYC_PORT_AMP:-18814}:${RPYC_PORT_AMP:-18814}"
+
 volumes:
   mt5_tickmill_data:
   mt5_xp_data:
+  mt5_amp_data:

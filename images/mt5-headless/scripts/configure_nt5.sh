@@ -1,5 +1,11 @@
-#!/bin/bash
+#!/command/with-contenv bash
 # Apply NT5TickFeedService inputs to MT5 Config/*.ini (UTF-16).
+#
+# Raw NT5 configuration operation invoked by configure_nt5_oneshot.sh.
+# Contract is frozen by tests/test_configure_nt5.sh.
+# Raw operational failures remain nonzero here; the s6 wrapper preserves
+# the legacy container-level nonfatal policy.
+# python3 is required only when CONFIGURE_NT5=1.
 set -Eeuo pipefail
 
 if [ "${CONFIGURE_NT5:-1}" != "1" ]; then

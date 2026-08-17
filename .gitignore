@@ -9,3 +9,8 @@ WINEPREFIX/
 
 # Variáveis de ambiente com senhas e tokens
 .env
+
+# Python bytecode (never commit)
+__pycache__/
+*.py[cod]
+.pytest_cache/

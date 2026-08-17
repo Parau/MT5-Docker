@@ -1,5 +1,15 @@
-#!/bin/bash
-# Install Windows Python under Wine once per Wine prefix (persisted in volume).
+#!/command/with-contenv bash
+# Raw Wine Python bootstrap for MetaTrader5 + rpyc + numpy<2.
+#
+# Raw Wine Python bootstrap invoked by bootstrap_python_oneshot.sh.
+# Contract is frozen by tests/test_bootstrap_python.sh.
+# Raw failures remain nonzero here; the s6 wrapper preserves legacy
+# container-level nonfatal policy.
+# This raw operation must complete before long-lived MT5 Wine startup because
+# the Python-install path contains wineserver -w.
+# This script does not depend on MT5 terminal readiness or MetaTrader5.initialize().
+# Limitations: does not consult RUN_MT5 / MT5_EXE / BOOTSTRAP_PYTHON; pip failures
+# and final wine_python_ok failures stay fatal at the raw script boundary.
 set -Eeuo pipefail
 
 export WINEPREFIX="${WINEPREFIX:-/config/.wine}"
