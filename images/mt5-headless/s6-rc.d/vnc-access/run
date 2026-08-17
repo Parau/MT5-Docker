@@ -1,8 +1,11 @@
 #!/command/with-contenv bash
 # s6 longrun: own remote VNC access policy (Xvnc delegate, x11vnc fallback, or disabled).
 #
-# Data flow: depends on wine-bootstrap; display already owns Xvnc/Xvfb; entrypoint only
-# waits for TCP/pgrep before install_mt5.sh. Input from container env via with-contenv.
+# Data flow: depends on wine-bootstrap; display already owns Xvnc/Xvfb. When display
+# owns Xvnc this service delegates and stays as sentinel; when VNC is disabled it
+# stays as sentinel; otherwise it waits for display/window-manager and execs x11vnc.
+# install-mt5 depends on this service (no intermediate entrypoint). Input from
+# container env via with-contenv.
 # Limitations: does not own display/Openbox; does not install MT5; secrets must not reach
 # the final daemon environment/argv.
 set -Eeuo pipefail

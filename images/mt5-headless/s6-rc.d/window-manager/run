@@ -3,7 +3,8 @@
 #
 # Data flow: depends on display longrun; polls xdpyinfo before exec openbox.
 # Input from container env via with-contenv; daemon exec uses minimal sanitized environment.
-# Limitations: x11vnc/Wine/MT5/bridge remain in entrypoint CMD.
+# Limitations: this service does not own VNC access, Wine bootstrap, MT5, or bridge;
+# each of those is managed by its dedicated s6 service.
 set -Eeuo pipefail
 
 readonly LOG_PREFIX="[WINDOW-MANAGER]"

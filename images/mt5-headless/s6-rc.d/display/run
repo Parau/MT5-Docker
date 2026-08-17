@@ -1,8 +1,9 @@
 #!/command/with-contenv bash
 # s6 longrun: own Xvnc or Xvfb display backend (single /proc snapshot per poll in lifecycle is elsewhere).
 #
-# Data flow: started by s6 before CMD; entrypoint waits via xdpyinfo. Input from container env
-# via with-contenv; daemon exec uses minimal sanitized environment.
+# Data flow: this longrun owns the display backend and is started/supervised by s6.
+# Downstream services perform their own bounded display checks when needed.
+# Input from container env via with-contenv; daemon exec uses minimal sanitized environment.
 # Limitations: x11vnc fallback is managed by vnc-access; Openbox/Wine/MT5/bridge not managed here.
 set -Eeuo pipefail
 

@@ -3,8 +3,8 @@
 #
 # Data flow: executed by s6-rc service python-bootstrap after configure-nt5; may call
 # bootstrap_python.sh then return 0 so stage2 does not fail. Downstream
-# mt5_lifecycle / bridge remain in the CMD entrypoint and start only after this
-# oneshot completes (intentional temporal change vs CMD-era ordering).
+# metatrader / bridge are dedicated s6 longruns and start only after this
+# oneshot completes (intentional temporal change vs former CMD-era ordering).
 # Limitations: preserves RUN_MT5=1 + MT5_EXE present + BOOTSTRAP_PYTHON=1 gates from
 # the former CMD ownership; raw bootstrap failures stay nonfatal here.
 set -Eeuo pipefail

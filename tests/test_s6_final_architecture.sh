@@ -289,6 +289,27 @@ grep -REq 'docker[[:space:]]+volume[[:space:]]+rm|compose[[:space:]]+down[[:spac
 TESTS_RUN=$((TESTS_RUN + 7))
 pass "docs + security static gates"
 
+echo "=== production comments must not describe legacy entrypoint/CMD as current ==="
+# Block only stale runtime descriptions. Allow factual phrases such as
+# "no legacy entrypoint", "entrypoint removed", "CMD no longer starts...".
+stale_hits="$(
+    grep -R -n -i -E \
+        'remain(s)? in entrypoint CMD|remain(s)? in the CMD entrypoint|entrypoint (only )?waits|started by s6 before CMD' \
+        "${S6_ROOT}"/*/run "${S6_ROOT}"/*/finish "${ROOT}/images/mt5-headless/scripts"/*.sh \
+        2>/dev/null || true
+)"
+[ -z "$stale_hits" ] || fail "stale entrypoint/CMD comments: ${stale_hits}"
+TESTS_RUN=$((TESTS_RUN + 1))
+pass "production comments do not describe entrypoint/CMD as current runtime"
+
+echo "=== canonical display/VNC documentation ==="
+grep -Fq 'Xvnc' "$ARCH_DOC" || fail "architecture doc must mention Xvnc"
+grep -Fq 'Xvfb' "$ARCH_DOC" || fail "architecture doc must mention Xvfb"
+grep -Fq 'x11vnc' "$ARCH_DOC" || fail "architecture doc must mention x11vnc"
+grep -Eiq 'delegat' "$ARCH_DOC" || fail "architecture doc must mention VNC delegation"
+TESTS_RUN=$((TESTS_RUN + 4))
+pass "canonical doc covers Xvnc/Xvfb/x11vnc/delegation"
+
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"
 [ "$TESTS_FAILED" -eq 0 ]

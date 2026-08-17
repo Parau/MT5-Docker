@@ -3,7 +3,7 @@
 #
 # Data flow: executed by s6-rc service deploy-mql5 after install-mt5; may call
 # deploy_mql5.sh then return 0 so stage2 does not fail. Downstream configure /
-# mt5_lifecycle / Python / bridge remain in the CMD entrypoint.
+# python-bootstrap / metatrader / bridge are dedicated s6 services.
 # Limitations: preserves RUN_MT5=1 + MT5_EXE present + DEPLOY_MQL5=1 gates from
 # the former CMD ownership; raw deploy failures stay nonfatal here.
 set -Eeuo pipefail

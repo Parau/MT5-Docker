@@ -1,7 +1,7 @@
 #!/command/with-contenv bash
-# s6 oneshot: prepare and validate WINEPREFIX before CMD (install MT5 / lifecycle).
+# s6 oneshot: prepare and validate WINEPREFIX before install-mt5 / lifecycle services.
 #
-# Data flow: depends on window-manager; runs once in stage2; entrypoint assumes COMPLETED.
+# Data flow: depends on window-manager; runs once in stage2; later s6 services assume COMPLETED.
 # Input from container env via with-contenv. Limitations: does not install MT5, deploy MQL5,
 # configure NT5, bootstrap Python, or start bridge/lifecycle.
 set -Eeuo pipefail

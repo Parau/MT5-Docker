@@ -43,10 +43,10 @@ Docker HEALTHCHECK  →  metatrader up + bridge up + RPyC root.health()
 
 | Service | Type | Role | Dependencies | Fatal / restart |
 |---------|------|------|--------------|-----------------|
-| `display` | longrun | Xvfb | `base` (s6-overlay) | supervised restart |
+| `display` | longrun | Display backend owner: Xvnc/Xtigervnc by default when VNC is enabled; Xvfb for alternate/non-VNC operation | `base` (s6-overlay) | supervised restart |
 | `window-manager` | longrun | openbox | `display` | supervised restart |
 | `wine-bootstrap` | oneshot | Wine prefix bootstrap | `window-manager` | oneshot |
-| `vnc-access` | longrun | TigerVNC (optional) | `wine-bootstrap` | supervised restart |
+| `vnc-access` | longrun | VNC access policy: delegates to display-owned Xvnc (sentinel), owns x11vnc fallback, or stays as sentinel when disabled | `wine-bootstrap` | supervised restart |
 | `install-mt5` | oneshot | MT5 install gate | `vnc-access` | oneshot |
 | `deploy-mql5` | oneshot | Vendor MQL5 sync | `install-mt5` | oneshot |
 | `configure-nt5` | oneshot | `services.ini` / Experts flags | `deploy-mql5` | oneshot |
@@ -55,6 +55,11 @@ Docker HEALTHCHECK  →  metatrader up + bridge up + RPyC root.health()
 | `bridge` | longrun | RPyC bridge | `metatrader` | isolated restart; crash-loop → **75** |
 
 Source of truth: `images/mt5-headless/s6-rc.d/*/type` and `dependencies.d/`.
+
+Display/VNC (defaults `DISPLAY_BACKEND=xvnc`, `ENABLE_VNC=1`): `display` execs Xvnc or
+Xtigervnc when those defaults hold, otherwise Xvfb. `vnc-access` then either
+delegates to that display-owned Xvnc (sentinel), stays as sentinel when VNC is
+disabled, or waits for display/window-manager and execs x11vnc as fallback.
 
 User bundle: `images/mt5-headless/user-bundles.d/user/contents.d/` lists the same
 ten services. No `mt5-ready` / watchdog services.

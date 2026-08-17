@@ -2,8 +2,8 @@
 # Install or skip MetaTrader 5 inside the Wine prefix (s6 oneshot install-mt5).
 #
 # Data flow: executed by s6-rc oneshot install-mt5 after vnc-access is up; logical
-# dependency on VNC readiness for real installs. Downstream runtime (deploy MQL5,
-# configure NT5, mt5_lifecycle, Python, bridge) remains in the CMD entrypoint.
+# dependency on VNC readiness for real installs. Downstream deploy-mql5,
+# configure-nt5, python-bootstrap, metatrader, and bridge are dedicated s6 services.
 # Limitations: does not start MT5; longrun VNC dependency is not TCP readiness —
 # this script waits for VNC only when INSTALL_MT5=1 and MT5_EXE is absent.
 set -Eeuo pipefail
