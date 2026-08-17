@@ -62,6 +62,37 @@ assert_dir_missing() {
     fi
 }
 
+assert_dir_exists() {
+    local path="$1"
+    local label="$2"
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [ ! -d "$path" ]; then
+        fail "${label}: missing dir '${path}'"
+    fi
+}
+
+assert_file_same() {
+    local src="$1"
+    local dest="$2"
+    local label="$3"
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if ! cmp -s "$src" "$dest"; then
+        fail "${label}: '${src}' != '${dest}'"
+    fi
+}
+
+assert_file_content() {
+    local path="$1"
+    local expected="$2"
+    local label="$3"
+    TESTS_RUN=$((TESTS_RUN + 1))
+    local actual
+    actual="$(cat "$path")"
+    if [ "$actual" != "$expected" ]; then
+        fail "${label}: expected '${expected}', got '${actual}'"
+    fi
+}
+
 setup_case() {
     CASE_DIR="$(mktemp -d /tmp/deploy-mql5-test.XXXXXX)"
     WINEPREFIX="${CASE_DIR}/wineprefix"
@@ -81,11 +112,15 @@ make_mt5_install() {
 
 make_full_vendor() {
     mkdir -p "${VENDOR_MQL5_ROOT}/Include/WebSocket" "${VENDOR_MQL5_ROOT}/Services"
+    mkdir -p "${VENDOR_MQL5_ROOT}/Experts/FluxoReal" "${VENDOR_MQL5_ROOT}/Experts/OutroVendor/Subdir"
     printf 'wire-content\n' >"${VENDOR_MQL5_ROOT}/Include/NT5FeedWire.mqh"
     printf 'ws-a\n' >"${VENDOR_MQL5_ROOT}/Include/WebSocket/A.mqh"
     printf 'ws-b\n' >"${VENDOR_MQL5_ROOT}/Include/WebSocket/B.mqh"
     printf 'service-mq5\n' >"${VENDOR_MQL5_ROOT}/Services/NT5TickFeedService.mq5"
     printf 'service-ex5\n' >"${VENDOR_MQL5_ROOT}/Services/NT5TickFeedService.ex5"
+    printf 'boleta-a-binary-fixture\n' >"${VENDOR_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5"
+    printf 'boleta-b-binary-fixture\n' >"${VENDOR_MQL5_ROOT}/Experts/FluxoReal/BoletaB.ex5"
+    printf 'other-vendor-ea\n' >"${VENDOR_MQL5_ROOT}/Experts/OutroVendor/Subdir/EA.ex5"
 }
 
 run_deploy() {
@@ -149,7 +184,18 @@ cmp -s "${VENDOR_MQL5_ROOT}/Services/NT5TickFeedService.mq5" "${MT5_MQL5_ROOT}/S
 cmp -s "${VENDOR_MQL5_ROOT}/Services/NT5TickFeedService.ex5" "${MT5_MQL5_ROOT}/Services/NT5TickFeedService.ex5" || fail "ex5 cmp"
 echo "$OUTPUT" | grep -q "NT5TickFeedService.mq5" || fail "mq5 log missing"
 echo "$OUTPUT" | grep -q "compilado vendored" || fail "ex5 log missing"
+echo "$OUTPUT" | grep -q "Experts vendorizados sincronizados" || fail "experts log missing"
 echo "$OUTPUT" | grep -q "concluído\|concluido" || fail "done log missing"
+assert_file_exists "${MT5_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5" "FluxoReal A copied"
+assert_file_exists "${MT5_MQL5_ROOT}/Experts/FluxoReal/BoletaB.ex5" "FluxoReal B copied"
+assert_file_exists "${MT5_MQL5_ROOT}/Experts/OutroVendor/Subdir/EA.ex5" "nested EA copied"
+assert_dir_missing "${MT5_MQL5_ROOT}/Experts/Experts" "must not nest Experts/Experts"
+assert_file_same "${VENDOR_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5" \
+    "${MT5_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5" "BoletaA cmp"
+assert_file_same "${VENDOR_MQL5_ROOT}/Experts/FluxoReal/BoletaB.ex5" \
+    "${MT5_MQL5_ROOT}/Experts/FluxoReal/BoletaB.ex5" "BoletaB cmp"
+assert_file_same "${VENDOR_MQL5_ROOT}/Experts/OutroVendor/Subdir/EA.ex5" \
+    "${MT5_MQL5_ROOT}/Experts/OutroVendor/Subdir/EA.ex5" "nested EA cmp"
 pass "full deploy copies all artifacts"
 cleanup_case
 
@@ -225,10 +271,15 @@ printf 'wire-space\n' >"${VENDOR_MQL5_ROOT}/Include/NT5FeedWire.mqh"
 printf 'ws-space\n' >"${VENDOR_MQL5_ROOT}/Include/WebSocket/A.mqh"
 printf 'mq5-space\n' >"${VENDOR_MQL5_ROOT}/Services/NT5TickFeedService.mq5"
 printf 'ex5-space\n' >"${VENDOR_MQL5_ROOT}/Services/NT5TickFeedService.ex5"
+mkdir -p "${VENDOR_MQL5_ROOT}/Experts/Fluxo Real"
+printf 'boleta-space-fixture\n' >"${VENDOR_MQL5_ROOT}/Experts/Fluxo Real/Boleta Teste.ex5"
 run_deploy
 assert_eq "0" "$STATUS" "spaces path exit"
 assert_file_exists "${MT5_MQL5_ROOT}/Include/NT5FeedWire.mqh" "wire with spaces"
 assert_file_exists "${MT5_MQL5_ROOT}/Services/NT5TickFeedService.ex5" "ex5 with spaces"
+assert_file_exists "${MT5_MQL5_ROOT}/Experts/Fluxo Real/Boleta Teste.ex5" "expert with spaces"
+assert_file_same "${VENDOR_MQL5_ROOT}/Experts/Fluxo Real/Boleta Teste.ex5" \
+    "${MT5_MQL5_ROOT}/Experts/Fluxo Real/Boleta Teste.ex5" "expert spaces cmp"
 pass "paths with spaces work"
 cleanup_case
 
@@ -264,6 +315,99 @@ else
     echo "$OUTPUT" | grep -q "concluído\|concluido" || fail "done log missing after ws tolerance"
     pass "WebSocket broken symlink tolerated via || true"
 fi
+cleanup_case
+
+echo "=== test 12: vendor Experts absent is nonfatal ==="
+setup_case
+make_mt5_install
+make_full_vendor
+rm -rf "${VENDOR_MQL5_ROOT}/Experts"
+run_deploy
+assert_eq "0" "$STATUS" "experts absent exit"
+assert_file_exists "${MT5_MQL5_ROOT}/Services/NT5TickFeedService.mq5" "mq5 without experts"
+assert_file_exists "${MT5_MQL5_ROOT}/Include/NT5FeedWire.mqh" "wire without experts"
+assert_dir_missing "${MT5_MQL5_ROOT}/Experts" "must not invent Experts tree"
+echo "$OUTPUT" | grep -q "Experts vendorizados sincronizados" && fail "experts log must be absent"
+echo "$OUTPUT" | grep -q "concluído\|concluido" || fail "done log missing without experts"
+pass "vendor Experts absent is nonfatal"
+cleanup_case
+
+echo "=== test 13: vendor Experts empty is nonfatal ==="
+setup_case
+make_mt5_install
+make_full_vendor
+rm -rf "${VENDOR_MQL5_ROOT}/Experts"
+mkdir -p "${VENDOR_MQL5_ROOT}/Experts"
+run_deploy
+assert_eq "0" "$STATUS" "experts empty exit"
+assert_file_exists "${MT5_MQL5_ROOT}/Services/NT5TickFeedService.ex5" "ex5 with empty experts"
+assert_file_exists "${MT5_MQL5_ROOT}/Include/NT5FeedWire.mqh" "wire with empty experts"
+echo "$OUTPUT" | grep -q "concluído\|concluido" || fail "done log missing with empty experts"
+pass "vendor Experts empty is nonfatal"
+cleanup_case
+
+echo "=== test 14: Experts deploy is additive ==="
+setup_case
+make_mt5_install
+make_full_vendor
+mkdir -p "${MT5_MQL5_ROOT}/Experts/Manual"
+printf 'manual-existing-content\n' >"${MT5_MQL5_ROOT}/Experts/Manual/MeuEA.ex5"
+run_deploy
+assert_eq "0" "$STATUS" "additive deploy exit"
+assert_file_exists "${MT5_MQL5_ROOT}/Experts/Manual/MeuEA.ex5" "manual EA kept"
+assert_file_content "${MT5_MQL5_ROOT}/Experts/Manual/MeuEA.ex5" "manual-existing-content" "manual content unchanged"
+assert_file_exists "${MT5_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5" "vendored EA added"
+assert_dir_missing "${MT5_MQL5_ROOT}/Experts/Experts" "no nested Experts after additive"
+pass "manual EA preserved; vendored Experts added"
+cleanup_case
+
+echo "=== test 15: vendored Expert same path is updated ==="
+setup_case
+make_mt5_install
+make_full_vendor
+mkdir -p "${MT5_MQL5_ROOT}/Experts/FluxoReal"
+printf 'old-version\n' >"${MT5_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5"
+run_deploy
+assert_eq "0" "$STATUS" "update deploy exit"
+assert_file_content "${MT5_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5" "boleta-a-binary-fixture" "vendored file updated"
+assert_file_same "${VENDOR_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5" \
+    "${MT5_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5" "updated file matches vendor"
+pass "same-path vendored Expert is overwritten"
+cleanup_case
+
+echo "=== test 16: Experts mkdir/copy error is nonzero ==="
+setup_case
+make_mt5_install
+make_full_vendor
+mkdir -p "$MT5_MQL5_ROOT"
+printf 'not-a-dir\n' >"${MT5_MQL5_ROOT}/Experts"
+run_deploy
+TESTS_RUN=$((TESTS_RUN + 1))
+if [ "$STATUS" -eq 0 ]; then
+    fail "Experts mkdir/copy failure should be nonzero"
+fi
+echo "$OUTPUT" | grep -q "concluído\|concluido" && fail "done log must be absent on Experts failure"
+echo "$OUTPUT" | grep -q "Experts vendorizados sincronizados" && fail "experts success log must be absent on failure"
+pass "Experts copy/mkdir error returns nonzero"
+cleanup_case
+
+echo "=== test 17: Experts deploy is idempotent ==="
+setup_case
+make_mt5_install
+make_full_vendor
+mkdir -p "${MT5_MQL5_ROOT}/Experts/Manual"
+printf 'manual-existing-content\n' >"${MT5_MQL5_ROOT}/Experts/Manual/MeuEA.ex5"
+run_deploy
+assert_eq "0" "$STATUS" "first idempotent deploy"
+run_deploy
+assert_eq "0" "$STATUS" "second idempotent deploy"
+assert_file_exists "${MT5_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5" "vendored still present"
+assert_file_same "${VENDOR_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5" \
+    "${MT5_MQL5_ROOT}/Experts/FluxoReal/BoletaA.ex5" "idempotent cmp"
+assert_file_content "${MT5_MQL5_ROOT}/Experts/Manual/MeuEA.ex5" "manual-existing-content" "manual kept after rerun"
+assert_dir_missing "${MT5_MQL5_ROOT}/Experts/Experts" "no nested Experts after rerun"
+assert_file_missing "${MT5_MQL5_ROOT}/Experts/FluxoReal/FluxoReal/BoletaA.ex5" "no duplicated subtree"
+pass "repeat deploy is idempotent and additive"
 cleanup_case
 
 echo "=== summary ==="

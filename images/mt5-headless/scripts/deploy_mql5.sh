@@ -1,12 +1,15 @@
 #!/command/with-contenv bash
-# Deploy vendored MQL5 Service + Include tree into the MT5 portable data folder.
+# Deploy vendored MQL5 Service + Include + Experts tree into the MT5 portable
+# data folder.
 #
 # Data flow: core deploy operation invoked by deploy_mql5_oneshot.sh (s6 oneshot
 # deploy-mql5). Copies /vendor/mql5 (or VENDOR_MQL5_ROOT) into the Wine MT5 MQL5
-# tree for NT5TickFeedService. Contract is frozen by tests/test_deploy_mql5.sh.
+# tree for NT5TickFeedService and vendored Experts. Contract is frozen by
+# tests/test_deploy_mql5.sh.
 # Limitations: raw operational failures remain nonzero here; the s6 wrapper
 # preserves the legacy container-level nonfatal policy. Missing .ex5 is
-# warning-only; WebSocket copy errors are tolerated (|| true).
+# warning-only; WebSocket copy errors are tolerated (|| true). Experts deploy
+# is additive (add/update, never delete unmanaged files).
 set -Eeuo pipefail
 
 readonly LOG_PREFIX="[DEPLOY-MQL5]"
@@ -58,6 +61,14 @@ if [ -f "$VENDOR_ROOT/Services/NT5TickFeedService.ex5" ]; then
     log "NT5TickFeedService.ex5 (compilado vendored)"
 else
     log "AVISO — NT5TickFeedService.ex5 ausente; compile no VNC (MetaEditor F7) ou re-sync vendor com .ex5 do nt_mt5."
+fi
+
+# Copy vendor Experts/* into MQL5/Experts/ (not Experts/Experts). Additive:
+# mkdir + cp -a of the tree contents; never rm/rsync --delete the target.
+if [ -d "$VENDOR_ROOT/Experts" ]; then
+    mkdir -p "$MT5_MQL5_ROOT/Experts"
+    cp -a "$VENDOR_ROOT/Experts/." "$MT5_MQL5_ROOT/Experts/"
+    log "Experts vendorizados sincronizados"
 fi
 
 log "concluído."
