@@ -2,7 +2,7 @@
 # Deterministic shutdown-ownership tests for start_bridge.sh (s6 longrun-owned).
 #
 # Data flow: sources production start_bridge.sh; fake wine plus real sleep
-# children cover probe/server TERM and spawn-registration race. Limitations:
+# children cover wait/server TERM and spawn-registration race. Limitations:
 # no Wine/broker; no s6-supervise (bridge finish coverage is in test_bridge_s6).
 set -Eeuo pipefail
 
@@ -38,41 +38,26 @@ assert_eq() {
 # shellcheck source=../images/mt5-headless/scripts/start_bridge.sh
 source "$SCRIPT"
 
+write_proc_cmdline() {
+    local proc_root="$1"
+    local pid="$2"
+    shift 2
+    local dir="${proc_root}/${pid}"
+    mkdir -p "$dir"
+    local arg
+    : >"${dir}/cmdline"
+    for arg in "$@"; do
+        printf '%s\0' "$arg" >>"${dir}/cmdline"
+    done
+    printf 'State:\tR\n' >"${dir}/status"
+}
+
 setup_runtime() {
     CASE_DIR="$(mktemp -d /tmp/bridge-shutdown.XXXXXX)"
     FAKE_BIN="${CASE_DIR}/bin"
-    PYLIB="${CASE_DIR}/pylib"
     BRIDGE_DIR="${CASE_DIR}/bridge"
-    mkdir -p "$FAKE_BIN" "$PYLIB" "$BRIDGE_DIR"
-
-    cat >"${PYLIB}/MetaTrader5.py" <<'EOF'
-import os
-import time
-
-_DELAY = float(os.environ.get("MT5_FAKE_DELAY", "0"))
-_MODE = os.environ.get("MT5_FAKE_MODE", "ready")
-
-
-class _Info:
-    def __init__(self, connected: bool) -> None:
-        self.connected = connected
-
-
-def initialize() -> bool:
-    if _DELAY > 0:
-        time.sleep(_DELAY)
-    return _MODE != "init_false"
-
-
-def terminal_info():
-    if _MODE == "init_false":
-        raise AssertionError("terminal_info must not run")
-    return _Info(True)
-
-
-def shutdown() -> None:
-    return None
-EOF
+    PROC_ROOT="${CASE_DIR}/proc"
+    mkdir -p "$FAKE_BIN" "$BRIDGE_DIR" "$PROC_ROOT"
 
     cat >"${FAKE_BIN}/wine" <<'EOF'
 #!/bin/bash
@@ -81,20 +66,9 @@ if [ "${1:-}" != "python" ]; then
     exit 97
 fi
 shift
-export PYTHONPATH="${PYLIB:?}${PYTHONPATH:+:${PYTHONPATH}}"
 if [ "${1:-}" = "-" ]; then
-    count=0
-    if [ -f "${PROBE_COUNT:?}" ]; then
-        count="$(cat "$PROBE_COUNT")"
-    fi
-    count=$((count + 1))
-    echo "$count" >"$PROBE_COUNT"
-    if [ "${STAY_PROBE:-0}" = "1" ]; then
-        echo $$ >"${PROBE_PID_FILE:?}"
-        exec sleep 300
-    fi
-    shift
-    exec python3 - "$@"
+    echo "unexpected wine python - probe" >&2
+    exit 97
 fi
 count=0
 if [ -f "${BRIDGE_COUNT:?}" ]; then
@@ -128,27 +102,26 @@ if mode == "stubborn":
 raise SystemExit(int(os.environ.get("BRIDGE_EXIT", "42")))
 EOF
 
-    echo 0 >"${CASE_DIR}/probe_count"
     echo 0 >"${CASE_DIR}/bridge_count"
-    : >"${CASE_DIR}/probe.pid"
     : >"${CASE_DIR}/server.pid"
+}
+
+admit_normal_terminal() {
+    write_proc_cmdline "$PROC_ROOT" 4242 "C:\\Program Files\\MetaTrader 5\\terminal64.exe" "/portable"
 }
 
 run_wrapper_bg() {
     PATH="${FAKE_BIN}:${PATH}" \
-    PYLIB="$PYLIB" \
     BRIDGE_DIR="$BRIDGE_DIR" \
-    PROBE_COUNT="${CASE_DIR}/probe_count" \
+    BRIDGE_PROC_ROOT="$PROC_ROOT" \
     BRIDGE_COUNT="${CASE_DIR}/bridge_count" \
-    PROBE_PID_FILE="${CASE_DIR}/probe.pid" \
     SERVER_PID_FILE="${CASE_DIR}/server.pid" \
-    STAY_PROBE="${STAY_PROBE:-0}" \
     BRIDGE_CHILD_MODE="${BRIDGE_CHILD_MODE:-stay}" \
     BRIDGE_WAIT_SECONDS="${BRIDGE_WAIT_SECONDS:-30}" \
-    BRIDGE_RETRY_SECONDS="${BRIDGE_RETRY_SECONDS:-5}" \
+    BRIDGE_PROCESS_POLL_SECONDS="${BRIDGE_PROCESS_POLL_SECONDS:-1}" \
+    BRIDGE_MT5_PROCESS_STABLE_SECONDS="${BRIDGE_MT5_PROCESS_STABLE_SECONDS:-1}" \
     BRIDGE_SHUTDOWN_TIMEOUT_SECONDS="${BRIDGE_SHUTDOWN_TIMEOUT_SECONDS:-8}" \
     BRIDGE_SHUTDOWN_POLL_SECONDS="${BRIDGE_SHUTDOWN_POLL_SECONDS:-1}" \
-    MT5_FAKE_MODE="${MT5_FAKE_MODE:-ready}" \
     WINEPREFIX=/tmp/bridge-wine \
     WINEDEBUG=-all \
     RPYC_PORT=18812 \
@@ -159,7 +132,7 @@ run_wrapper_bg() {
 wait_for_log() {
     local pattern="$1"
     local i
-    for i in $(seq 1 50); do
+    for i in $(seq 1 80); do
         if grep -q "$pattern" "${CASE_DIR}/wrapper.log" 2>/dev/null; then
             return 0
         fi
@@ -168,39 +141,27 @@ wait_for_log() {
     return 1
 }
 
-echo "=== test 1: TERM during readiness probe ==="
+echo "=== test 1: TERM during process wait ==="
 setup_runtime
-STAY_PROBE=1
 BRIDGE_WAIT_SECONDS=60
 run_wrapper_bg
-wait_for_log "state=WAITING_FOR_MT5" || fail "waiting log"
-for _i in $(seq 1 50); do
-    if [ -s "${CASE_DIR}/probe.pid" ] && kill -0 "$(cat "${CASE_DIR}/probe.pid")" 2>/dev/null; then
-        break
-    fi
-    sleep 0.1
-done
-PROBE_PID="$(cat "${CASE_DIR}/probe.pid")"
-[ -n "$PROBE_PID" ] || fail "probe pid missing"
+wait_for_log "state=WAITING_FOR_MT5_PROCESS" || fail "waiting log"
+sleep 0.3
+assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "wait must not start server"
 kill -TERM "$WRAPPER_PID"
 set +e
 wait "$WRAPPER_PID"
 STATUS=$?
 set -e
-assert_eq "0" "$STATUS" "wrapper TERM during probe exit0"
-grep -q "child_kind=probe" "${CASE_DIR}/wrapper.log" || fail "child_kind=probe"
-grep -q "shutdown_result=completed" "${CASE_DIR}/wrapper.log" || fail "probe completed"
+assert_eq "0" "$STATUS" "wrapper TERM during wait exit0"
 assert_eq "0" "$(cat "${CASE_DIR}/bridge_count")" "final bridge must not start"
-if kill -0 "$PROBE_PID" 2>/dev/null; then
-    kill -KILL "$PROBE_PID" 2>/dev/null || true
-    fail "probe child must receive TERM"
-fi
-pass "TERM during probe stops child and skips server"
+grep -q "child_kind=none" "${CASE_DIR}/wrapper.log" || true
+pass "TERM during wait stops wrapper without wine child"
 rm -rf "$CASE_DIR"
 
 echo "=== test 2: TERM during final server ==="
 setup_runtime
-STAY_PROBE=0
+admit_normal_terminal
 BRIDGE_CHILD_MODE=stay
 run_wrapper_bg
 wait_for_log "state=RUNNING child_pid=" || fail "running log"
@@ -253,6 +214,7 @@ rm -rf "${CASE_DIR:-}"
 
 echo "=== test 4: stubborn child fallback without SIGKILL ==="
 setup_runtime
+admit_normal_terminal
 BRIDGE_CHILD_MODE=stubborn
 BRIDGE_SHUTDOWN_TIMEOUT_SECONDS=2
 BRIDGE_SHUTDOWN_POLL_SECONDS=1
@@ -322,18 +284,18 @@ rm -f /tmp/mt5-bridge-zombie-pid
 
 echo "=== test 7: crash exit42 count1 no restart ==="
 setup_runtime
+admit_normal_terminal
 BRIDGE_CHILD_MODE=exit42
-BRIDGE_WAIT_SECONDS=0
 set +e
 PATH="${FAKE_BIN}:${PATH}" \
-PYLIB="$PYLIB" \
 BRIDGE_DIR="$BRIDGE_DIR" \
-PROBE_COUNT="${CASE_DIR}/probe_count" \
+BRIDGE_PROC_ROOT="$PROC_ROOT" \
 BRIDGE_COUNT="${CASE_DIR}/bridge_count" \
-PROBE_PID_FILE="${CASE_DIR}/probe.pid" \
 SERVER_PID_FILE="${CASE_DIR}/server.pid" \
-STAY_PROBE=0 \
-BRIDGE_WAIT_SECONDS=0 \
+BRIDGE_CHILD_MODE=exit42 \
+BRIDGE_WAIT_SECONDS=30 \
+BRIDGE_PROCESS_POLL_SECONDS=1 \
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=1 \
 WINEPREFIX=/tmp/bridge-wine \
 bash "$SCRIPT" >"${CASE_DIR}/wrapper.log" 2>&1
 STATUS=$?
@@ -360,13 +322,15 @@ echo "$BODY" | grep -Fq 'wineserver -k' && fail "wrapper wineserver-k"
 echo "$BODY" | grep -Fq 'kill -KILL' && fail "wrapper SIGKILL"
 echo "$BODY" | grep -Eq 'pkill|wineboot' && fail "wrapper pkill/wineboot"
 echo "$BODY" | grep -Eq 'kill -TERM -- -|kill -- -' && fail "wrapper process-group"
+echo "$BODY" | grep -Eq 'MetaTrader5|mt5\.initialize|terminal_info|mt5\.shutdown' && \
+  fail "wrapper must not call MT5 Python API"
 test ! -e "${ROOT}/images/mt5-headless/cont-finish.d/10-wine-cleanup" || fail "no project Wine finalizer"
-TESTS_RUN=$((TESTS_RUN + 5))
+TESTS_RUN=$((TESTS_RUN + 6))
 pass "wrapper has no SIGKILL/pg/wineserver-k; no project global Wine kill"
 
 echo "=== test 10: deterministic spawn→PID registration race ==="
 setup_runtime
-BRIDGE_WAIT_SECONDS=0
+admit_normal_terminal
 BRIDGE_CHILD_MODE=stay
 cat >"${CASE_DIR}/race_hook.sh" <<EOF
 bridge_after_spawn_before_register() {
@@ -387,15 +351,14 @@ EOF
 # shellcheck disable=SC1090
 source "${CASE_DIR}/race_hook.sh"
 PATH="${FAKE_BIN}:${PATH}" \
-PYLIB="$PYLIB" \
 BRIDGE_DIR="$BRIDGE_DIR" \
-PROBE_COUNT="${CASE_DIR}/probe_count" \
+BRIDGE_PROC_ROOT="$PROC_ROOT" \
 BRIDGE_COUNT="${CASE_DIR}/bridge_count" \
-PROBE_PID_FILE="${CASE_DIR}/probe.pid" \
 SERVER_PID_FILE="${CASE_DIR}/server.pid" \
-STAY_PROBE=0 \
 BRIDGE_CHILD_MODE=stay \
-BRIDGE_WAIT_SECONDS=0 \
+BRIDGE_WAIT_SECONDS=30 \
+BRIDGE_PROCESS_POLL_SECONDS=1 \
+BRIDGE_MT5_PROCESS_STABLE_SECONDS=1 \
 BRIDGE_SHUTDOWN_TIMEOUT_SECONDS=8 \
 WINEPREFIX=/tmp/bridge-wine \
 WINEDEBUG=-all \
@@ -409,7 +372,7 @@ source "'"${CASE_DIR}/race_hook.sh"'"
 main
 ' >"${CASE_DIR}/wrapper.log" 2>&1 &
 WRAPPER_PID=$!
-for _i in $(seq 1 100); do
+for _i in $(seq 1 120); do
     if [ -s "${CASE_DIR}/spawned.pid" ]; then
         break
     fi
@@ -418,6 +381,7 @@ done
 test -s "${CASE_DIR}/spawned.pid" || fail "child must be spawned before register"
 assert_eq "1" "$(cat "${CASE_DIR}/spawn_flag")" "SPAWN_IN_PROGRESS still set"
 CHILD_PID="$(cat "${CASE_DIR}/spawned.pid")"
+assert_eq "server" "$(cat "${CASE_DIR}/spawned.kind")" "race child is server"
 # Give the hook a moment to enter its STOP_DEFERRED wait loop.
 sleep 0.1
 kill -TERM "$WRAPPER_PID"
@@ -435,8 +399,8 @@ if kill -0 "$CHILD_PID" 2>/dev/null; then
     kill -KILL "$CHILD_PID" 2>/dev/null || true
     fail "child must not remain orphan"
 fi
-TESTS_RUN=$((TESTS_RUN + 3))
-pass "TERM during spawn defers, registers PID, TERMs child, no orphan"
+TESTS_RUN=$((TESTS_RUN + 4))
+pass "TERM during server spawn defers, registers PID, TERMs child, no orphan"
 rm -rf "$CASE_DIR"
 
 echo "=== summary ==="

@@ -2,8 +2,8 @@
 # MT5 terminal lifecycle wrapper: preserve LiveUpdate handoff without wineserver -k.
 #
 # Data flow: owned by the s6 longrun `metatrader` after python-bootstrap.
-# Bridge is a separate s6 longrun (`start_bridge.sh`) with its own API readiness
-# polling; this wrapper does not own the bridge.
+# Bridge is a separate s6 longrun (`start_bridge.sh`) with a local terminal
+# process gate; this wrapper does not own the bridge.
 # LiveUpdate handoff is supported (updater / skipupdate → RUNNING_RELAUNCHED).
 # Crash autorestart does not exist: one wine spawn, then handoff or fatal exit.
 # RUNNING is process/lifecycle liveness only, not MT5/API/RPyC readiness.

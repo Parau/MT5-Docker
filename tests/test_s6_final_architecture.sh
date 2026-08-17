@@ -310,6 +310,28 @@ grep -Eiq 'delegat' "$ARCH_DOC" || fail "architecture doc must mention VNC deleg
 TESTS_RUN=$((TESTS_RUN + 4))
 pass "canonical doc covers Xvnc/Xvfb/x11vnc/delegation"
 
+echo "=== start_bridge process gate (no API preflight) ==="
+START_BRIDGE="${ROOT}/images/mt5-headless/scripts/start_bridge.sh"
+test -f "$START_BRIDGE" || fail "start_bridge.sh missing"
+SB_BODY="$(awk 'NR==1{next} /^#/{next} {print}' "$START_BRIDGE")"
+echo "$SB_BODY" | grep -Eq 'MetaTrader5|mt5\.initialize|terminal_info|mt5\.shutdown' && \
+  fail "start_bridge must not call MT5 Python API"
+grep -Eq 'MetaTrader5|mt5\.initialize|terminal_info|mt5\.shutdown' "$START_BRIDGE" && \
+  fail "start_bridge file must not mention MT5 Python API"
+echo "$SB_BODY" | grep -Fq 'wine python -' && fail "start_bridge must not probe with wine python -"
+echo "$SB_BODY" | grep -Fq 'scan_normal_mt5_processes' || fail "passive process scan missing"
+echo "$SB_BODY" | grep -Fq 'WAITING_FOR_MT5_PROCESS' || fail "waiting state missing"
+echo "$SB_BODY" | grep -Fq 'continue_waiting' || fail "warning continue_waiting missing"
+echo "$SB_BODY" | grep -Fq 'wine python mt5_bridge.py' || fail "server spawn missing"
+grep -Fq 'passive local terminal-process gate' "$ARCH_DOC" || fail "arch doc process gate"
+grep -Fq 'does not provide a guarantee beyond' "$ARCH_DOC" || fail "arch doc residual initialize limitation"
+grep -Fq 'root.health()' "$HEALTH" || fail "health remains root.health()"
+if find "$S6_ROOT" \( -name notification-fd -o -name timeout-up -o -path '*/data/check' \) | grep -q .; then
+    fail "native readiness artifacts present"
+fi
+TESTS_RUN=$((TESTS_RUN + 11))
+pass "start_bridge process gate; docs updated; health/readiness frozen"
+
 echo "=== summary ==="
 echo "scenarios_passed=${TESTS_PASSED} assertions_run=${TESTS_RUN} failed=${TESTS_FAILED}"
 [ "$TESTS_FAILED" -eq 0 ]

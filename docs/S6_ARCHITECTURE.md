@@ -92,6 +92,12 @@ ten services. No `mt5-ready` / watchdog services.
 ## G. Bridge lifecycle
 
 - Owned by `bridge` + `scripts/start_bridge.sh`.
+- Startup uses a **passive local terminal-process gate** (`/proc` cmdline scan
+  for a stable normal `terminal64.exe`). Updater/LiveUpdate does not admit the
+  server. The real `mt5_bridge.py` process performs the only startup
+  `initialize()`.
+- `BRIDGE_WAIT_SECONDS` is a warning/observability interval during that wait;
+  the wrapper keeps waiting and does not launch without a normal terminal.
 - On death: `bridge/finish` captures `wantedup`, quiesces old PGID, then
   `s6-permafailon` against the s6 death tally.
 - Defaults: **60s** window, **5** deaths; events = exits `1–255` + abnormal
@@ -161,10 +167,15 @@ Host binds for VNC and RPyC are `127.0.0.1`.
 
 ## N. Known deliberate limitations
 
-1. `start_bridge.sh` still uses connectivity preflight with `MetaTrader5.initialize()`.
-2. `initialize()` is side-effectful and may start the terminal.
-3. `BRIDGE_WAIT_SECONDS` is best-effort, not a hard wall-clock.
-4. Bridge process-up ≠ operational health.
+1. `start_bridge.sh` uses a passive local terminal-process gate; the real
+   bridge process performs the only startup `initialize()`.
+2. MetaQuotes documents that `initialize()` may launch a terminal if required;
+   the gate reduces ownership ambiguity but does not provide a guarantee beyond
+   the official API.
+3. `BRIDGE_WAIT_SECONDS` is a warning interval during passive wait, not a
+   launch timeout.
+4. Bridge process-up ≠ operational health. Waiting for a terminal is s6 `up`
+   with RPyC absent and Docker unhealthy — by design.
 5. Broker disconnected → Docker unhealthy, no auto-restart.
 6. Bridge alive-but-wedged → unhealthy, no watchdog restart.
 7. Compose `restart: "no"`.
@@ -174,6 +185,8 @@ Host binds for VNC and RPyC are `127.0.0.1`.
 
 ## Related tests
 
+- `tests/test_start_bridge.sh` — local process gate
+- `tests/test_bridge_process_gate.sh` — classifier/TEMP process gate
 - `tests/test_s6_final_architecture.sh` — high-level invariants
 - `tests/test_bridge_failure_policy.sh` / `_runtime.sh` — failure budget
 - `tests/test_bridge_readiness_policy.sh` — frozen readiness

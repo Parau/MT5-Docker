@@ -37,7 +37,7 @@ or supervisord runtime.
 | Display / WM / Wine / VNC | s6 longruns + `wine-bootstrap` | Headless desktop stack |
 | Install / deploy / configure / Python | s6 oneshots | Volume bootstrap (gated by env) |
 | MetaTrader | `metatrader` → `mt5_lifecycle.sh` | Terminal lifecycle / LiveUpdate |
-| Bridge | `bridge` → `start_bridge.sh` | RPyC after best-effort MT preflight |
+| Bridge | `bridge` → `start_bridge.sh` | RPyC after local MT process gate |
 
 `extra_hosts: host.docker.internal:host-gateway` lets Wine reach host WebSocket / adapter services.
 
@@ -150,7 +150,7 @@ Crash-loop budget counts **process deaths**, not Docker health failures. After e
 |----------|---------|---------|
 | `VNC_PASSWORD` | *(required in .env)* | TigerVNC password |
 | `RUN_MT5` / `RUN_BRIDGE` | `1` / `1` | Stage2 gate for longruns |
-| `BRIDGE_WAIT_SECONDS` | `180` | Best-effort bridge preflight wait |
+| `BRIDGE_WAIT_SECONDS` | `180` | Warning interval while waiting for a stable normal terminal |
 | `BRIDGE_FAILURE_BUDGET_WINDOW_SECONDS` | `60` | Crash-loop window |
 | `BRIDGE_FAILURE_BUDGET_DEATHS` | `5` | Crash-loop death threshold |
 | `NT5_SERVICE_ENABLED` | `0` | Keep `0` until whitelist is done |
